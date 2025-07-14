@@ -97,9 +97,9 @@ struct GemmRunner {
     const at::cuda::OptionalCUDAGuard device_guard(device_of(x));
     cudaStream_t stream = at::cuda::getCurrentCUDAStream(device.index());
 
-    gemmOp.initialize(arguments, stream);
+    gemmOp.initialize(arguments, nullptr, stream);
 
-    CUTLASS_CHECK(gemmOp(arguments, stream));
+    CUTLASS_CHECK(gemmOp(arguments, nullptr, stream));
 
     return true;
   }

@@ -16,29 +16,28 @@
 
 import torch
 import qutlass._CUDA
-from enum import Enum
-from typing import Literal, Tuple
-
-__all__ = [
-           "matmul_mxf4_bf16_tn",
-           "matmul_nvf4_bf16_tn",
-           "fusedQuantizeMx"
-           ]
+from typing import Literal
 
 def matmul_mxf4_bf16_tn(a: torch.Tensor,
                         b: torch.Tensor,
-                        block_scale_a: torch.Tensor,
-                        block_scale_b: torch.Tensor,
-                        alpha: torch.float32) -> torch.Tensor:
-    return qutlass._CUDA.matmul_mxf4_bf16_tn(a, b, block_scale_a, block_scale_b, alpha)
+                        a_sf: torch.Tensor,
+                        b_sf: torch.Tensor,
+                        alpha: torch.Tensor) -> torch.Tensor:
+    return qutlass._CUDA.matmul_mxf4_bf16_tn(a, b, a_sf, b_sf, alpha)
 
 def matmul_ada_mxf4_bf16_tn(a: torch.Tensor,
                             b: torch.Tensor,
                             a_sf: torch.Tensor,
                             b_sf: torch.Tensor,
-                            alpha: float = 1.0):
+                            alpha: torch.Tensor) -> torch.Tensor:
     return qutlass._CUDA.matmul_ada_mxf4_bf16_tn(a, b, a_sf, b_sf, alpha)
 
+def matmul_nvf4_bf16_tn(a: torch.Tensor,
+                        b: torch.Tensor,
+                        a_sf: torch.Tensor,
+                        b_sf: torch.Tensor,
+                        alpha: torch.Tensor) -> torch.Tensor:
+    return qutlass._CUDA.matmul_nvf4_bf16_tn(a, b, a_sf, b_sf, alpha)
 
 QuantMethod = Literal["quest", "abs_max"]
 def ceil_div(a, b):
@@ -46,17 +45,17 @@ def ceil_div(a, b):
 
 def fusedQuantizeMx(a: torch.Tensor,
                     b: torch.Tensor,
+                    #TODO: add global_scale for consistency?
                     *,
                     method: QuantMethod = "quest") -> tuple[torch.Tensor, torch.Tensor]:
-    xh_e2m1   = torch.empty(*a.shape[:-1], a.size(-1) // 2,  dtype=torch.uint8,          device=a.device)
-    #xh_e8m0   = torch.empty(*a.shape[:-1], a.size(-1) // 32, dtype=torch.float8_e8m0fnu, device=a.device)
+    xh_e2m1 = torch.empty(*a.shape[:-1], a.size(-1) // 2,  dtype=torch.uint8, device=a.device)
 
     rows, cols = a.numel()//a.size(-1), a.size(-1)//32
     n_row_blocks = ceil_div(rows, 128)
     n_col_blocks = ceil_div(cols, 4)
-    padded_rows = n_row_blocks * 128
-    padded_cols = n_col_blocks * 4
-    xh_e8m0   = torch.empty(padded_rows, padded_cols, dtype=torch.float8_e8m0fnu, device=a.device)
+    padded_rows  = n_row_blocks * 128
+    padded_cols  = n_col_blocks * 4
+    xh_e8m0      = torch.empty(padded_rows, padded_cols, dtype=torch.float8_e8m0fnu, device=a.device)
 
     if method=="quest":
         return qutlass._CUDA.fusedQuantizeMxQuest(a, b, xh_e2m1, xh_e8m0)
@@ -65,3 +64,17 @@ def fusedQuantizeMx(a: torch.Tensor,
     else:
         raise ValueError(f"invalid method {method!r}, "
                          "must be 'quest' or 'abs_max'")
+
+def fusedQuantizeNv(a: torch.Tensor,
+                    b: torch.Tensor,
+                    global_scale: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    xh_e2m1   = torch.empty(*a.shape[:-1], a.size(-1) // 2,  dtype=torch.uint8, device=a.device)
+
+    rows, cols = a.numel()//a.size(-1), a.size(-1)//16
+    n_row_blocks = ceil_div(rows, 128)
+    n_col_blocks = ceil_div(cols, 4)
+    padded_rows  = n_row_blocks * 128
+    padded_cols  = n_col_blocks * 4
+    xh_e4m3      = torch.empty(padded_rows, padded_cols, dtype=torch.float8_e4m3fn, device=a.device)
+
+    return qutlass._CUDA.fusedQuantizeNv(a, b, xh_e2m1, xh_e4m3, global_scale)

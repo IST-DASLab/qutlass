@@ -14,24 +14,27 @@
  * limitations under the License.
  */
 
-#include <gemm.h>
-#include <cutlass/float8.h>
-#include "cutlass/float8.h"
+#include <ATen/ATen.h>
+#include <torch/types.h>
+#include <ATen/cuda/CUDAContext.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <cuda_runtime.h>
+
+#ifndef QUTLASS_DISABLE_PYBIND
+#include <torch/extension.h>
+#endif
 
 #include <stddef.h>
-#include <torch/all.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAException.h>
-#include <c10/cuda/CUDAGuard.h>
 
 #include <cutlass/core_io.h>
 #include <cutlass/cutlass.h>
 #include <cutlass/half.h>
-
 #include <cutlass/numeric_types.h>
 #include <cutlass/util/host_tensor.h>
 
-#include "cutlass_extentions/gemm/device/mx_gemm.h"
+#include "cutlass_extensions/gemm/device/mx_gemm.h"
+
+#include <gemm.h>
 
 template <typename TileShape, typename WarpShape, int kStages>
 void qutlass_matmul_mxf4_v1(torch::Tensor const&input,
@@ -39,7 +42,7 @@ void qutlass_matmul_mxf4_v1(torch::Tensor const&input,
                             torch::Tensor const&input_sf,
                             torch::Tensor const&weight_sf,
                             torch::Tensor &out,
-                            float alpha,
+                            torch::Tensor const& alpha,
                             torch::Device device)
 {
   auto M = input.size(0);
@@ -103,9 +106,10 @@ void qutlass_matmul_mxf4_v1(torch::Tensor const&input,
       reinterpret_cast<const cutlass::float_ue8m0_t*>(weight_sf.data_ptr()),
       out_ref,
       out_ref,
-      {alpha, 0},
+      {},
       1
   };
+  arguments.epilogue.alpha_ptr = static_cast<ElementAccumulator const*>(alpha.data_ptr());
 
   Gemm gemm_op;
 
@@ -127,7 +131,7 @@ void matmul_host_ada_mxf4_bf16_tn(torch::Tensor const&input,
                                   torch::Tensor const&input_sf,
                                   torch::Tensor const&weight_sf,
                                   torch::Tensor &out,
-                                  float alpha)
+                                  torch::Tensor const& alpha)
 {
   using TileShape = typename cutlass::gemm::GemmShape<16, 16, 256>;
   using WarpShape = typename cutlass::gemm::GemmShape<16, 16, 256>;

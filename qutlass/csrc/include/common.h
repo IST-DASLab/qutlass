@@ -4,18 +4,15 @@
 #include <iostream>
 #include <stdexcept>
 #include <cstdint>
+#include <climits>
 
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
 
-
 #include <cstdint>
 #include <cuda.h>
-#include <iostream>
-#include <torch/torch.h>
 
 #include "cutlass/cutlass.h"
-#include <climits>
 
 /**
  * Helper function for checking CUTLASS errors

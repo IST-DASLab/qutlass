@@ -14,12 +14,13 @@
 # limitations under the License.
 #
 
-from setuptools import setup, find_packages
 import torch.utils.cpp_extension as torch_cpp_ext
-from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 import os
 import pathlib, torch
 import re
+
+from setuptools import setup, find_packages
+from torch.utils.cpp_extension import BuildExtension, CUDAExtension
 
 setup_dir = os.path.dirname(os.path.realpath(__file__))
 HERE = pathlib.Path(__file__).absolute().parent
@@ -38,17 +39,19 @@ def remove_unwanted_pytorch_nvcc_flags():
         except ValueError:
             pass
 
-def get_cuda_arch_flags():
-    dev   = torch.cuda.current_device()
+def detect_cc():
+    dev = torch.cuda.current_device()
     major, minor = torch.cuda.get_device_capability(dev)
-    arch_str = f"{major}{minor}a"
-    cc = major*10 + minor
+    return major * 10 + minor
 
+cc = detect_cc()
+
+def get_cuda_arch_flags():
     flags = [
         '-gencode', 'arch=compute_120a,code=sm_120a',
-        f'-DTARGET_CUDA_ARCH={cc}',
+        '-gencode', 'arch=compute_100a,code=sm_100a',
         '--expt-relaxed-constexpr',
-        '--use_fast_math',
+        '--use_fast_math', #TODO:
         '-std=c++17',
         '-O3',
         '-DNDEBUG',
@@ -75,7 +78,7 @@ if __name__ == '__main__':
     device = torch.cuda.current_device()
     print(f"Current device: {torch.cuda.get_device_name(device)}")
     print(f"Current CUDA capability: {torch.cuda.get_device_capability(device)}")
-    assert torch.cuda.get_device_capability(device)[0] >= 12, f"CUDA capability must be >= 12.0, yours is {torch.cuda.get_device_capability(device)}"
+    assert torch.cuda.get_device_capability(device)[0] >= 10, f"CUDA capability must be >= 10.0, yours is {torch.cuda.get_device_capability(device)}"
 
     print(f"PyTorch version: {torch_version}")
     m = re.match(r'^(\d+)\.(\d+)', torch_version)
@@ -89,7 +92,7 @@ if __name__ == '__main__':
     remove_unwanted_pytorch_nvcc_flags()
     setup(
         name='qutlass',
-        version='0.0.1',
+        version='0.1.0',
         author='Roberto L. Castro',
         author_email='Roberto.LopezCastro@ist.ac.at',
         description='CUTLASS-Powered Quantized BLAS for Deep Learning.',
@@ -101,14 +104,18 @@ if __name__ == '__main__':
                     'qutlass/csrc/bindings.cpp',
                     'qutlass/csrc/gemm.cu',
                     'qutlass/csrc/gemm_ada.cu', #TODO (later): fuse into gemm.cu
-                    'qutlass/csrc/fused_quantize_mx.cu'
+                    'qutlass/csrc/fused_quantize_mx.cu',
+                    'qutlass/csrc/fused_quantize_nv.cu',
+                    'qutlass/csrc/fused_quantize_mx_sm100.cu',
+                    'qutlass/csrc/fused_quantize_nv_sm100.cu'
                 ],
                 include_dirs=[
                     os.path.join(setup_dir, 'qutlass/csrc/include'),
-                    os.path.join(setup_dir, 'qutlass/csrc/include/cutlass_extentions'),
+                    os.path.join(setup_dir, 'qutlass/csrc/include/cutlass_extensions'),
                     os.path.join(setup_dir, 'third_party/cutlass/include'),
                     os.path.join(setup_dir, 'third_party/cutlass/tools/util/include')
                 ],
+                define_macros=[('TARGET_CUDA_ARCH', str(cc))],
                 extra_compile_args={
                     'cxx': ["-std=c++17"],
                     'nvcc': get_cuda_arch_flags(),

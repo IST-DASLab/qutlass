@@ -165,14 +165,6 @@ def to_blocked(input_matrix, use_triton_kernel: bool = False) -> Tensor:
 
     padded = input_matrix
     assert (rows, cols) == (padded_rows, padded_cols)
-    #if torch.compiler.is_compiling() or (rows, cols) != (padded_rows, padded_cols):
-    """ if (rows, cols) != (padded_rows, padded_cols):
-        padded = torch.zeros(
-            (padded_rows, padded_cols),
-            device=input_matrix.device,
-            dtype=input_matrix.dtype,
-        )
-        padded[:rows, :cols] = input_matrix """
 
     # Rearrange the blocks
     blocks = padded.view(n_row_blocks, 128, n_col_blocks, 4).permute(0, 2, 1, 3)

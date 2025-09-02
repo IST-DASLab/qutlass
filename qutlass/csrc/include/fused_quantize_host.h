@@ -15,7 +15,6 @@
  */
 
 #pragma once
-#include <torch/extension.h>
 #include <common.h>
 
 namespace QUTLASS {
@@ -29,5 +28,61 @@ void fusedQuantizeMxAbsMax_host(torch::Tensor&       D,
                                 torch::Tensor&       D_sf,
                                 torch::Tensor const& A,
                                 torch::Tensor const& B);
+
+void fusedQuantizeMxQuestHad64_host(torch::Tensor&       D,
+                                    torch::Tensor&       D_sf,
+                                    torch::Tensor const& A,
+                                    torch::Tensor const& B);
+
+void fusedQuantizeMxAbsMaxHad64_host(torch::Tensor&       D,
+                                     torch::Tensor&       D_sf,
+                                     torch::Tensor const& A,
+                                     torch::Tensor const& B);
+
+void fusedQuantizeMxQuestHad128_host(torch::Tensor&       D,
+                                     torch::Tensor&       D_sf,
+                                     torch::Tensor const& A,
+                                     torch::Tensor const& B);
+
+void fusedQuantizeMxAbsMaxHad128_host(torch::Tensor&       D,
+                                      torch::Tensor&       D_sf,
+                                      torch::Tensor const& A,
+                                      torch::Tensor const& B);
+
+void fusedQuantizeNv_host(torch::Tensor&       D,
+                          torch::Tensor&       D_sf,
+                          torch::Tensor const& A,
+                          torch::Tensor const& B,
+                          torch::Tensor const& global_scale);
+
+void fusedQuantizeNvHad32_host(torch::Tensor&       D,
+                               torch::Tensor&       D_sf,
+                               torch::Tensor const& A,
+                               torch::Tensor const& B,
+                               torch::Tensor const& global_scale);
+
+void fusedQuantizeNvHad64_host(torch::Tensor&       D,
+                               torch::Tensor&       D_sf,
+                               torch::Tensor const& A,
+                               torch::Tensor const& B,
+                               torch::Tensor const& global_scale);
+
+void fusedQuantizeNvHad128_host(torch::Tensor&       D,
+                                torch::Tensor&       D_sf,
+                                torch::Tensor const& A,
+                                torch::Tensor const& B,
+                                torch::Tensor const& global_scale);
+
+void fusedQuantizeMxAbsMax_host_sm100(torch::Tensor&       D,
+                                      torch::Tensor&       D_sf,
+                                      torch::Tensor const& A,
+                                      torch::Tensor const& B,
+                                      torch::Tensor const& global_scale);
+
+void fusedQuantizeNvAbsMax_host_sm100(torch::Tensor&       D,
+                                      torch::Tensor&       D_sf,
+                                      torch::Tensor const& A,
+                                      torch::Tensor const& B,
+                                      torch::Tensor const& global_scale);
 
 }  // namespace QUTLASS

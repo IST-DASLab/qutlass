@@ -1,0 +1,4 @@
+scipy
+triton
+matplotlib
+pandas

@@ -1,0 +1,13 @@
+cmake-build-*
+.DS_Store
+build
+dist
+*.egg-info
+*.pyc
+
+.venv/*
+CMakeFiles/*
+ctest/*
+*.so
+third_party/cutlass/*
+bench_*/*

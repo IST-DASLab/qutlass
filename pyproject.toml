@@ -1,0 +1,14 @@
+[build-system]
+requires = ["setuptools", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "qutlass"
+version = "0.1.0"
+description = "qutlass"
+authors = [{name = "Roberto L. Castro", email = "Roberto.LopezCastro@ist.ac.at"}]
+license = {text = "Apache-2.0"}
+dependencies = []
+
+[tool.setuptools]
+packages = ["qutlass"]

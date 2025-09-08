@@ -137,5 +137,9 @@ void matmul_host_ada_mxf4_bf16_tn(torch::Tensor const&input,
   using WarpShape = typename cutlass::gemm::GemmShape<16, 16, 256>;
   static const int kStages = 5;
 
+#if TARGET_CUDA_ARCH == 120
   qutlass_matmul_mxf4_v1<TileShape, WarpShape, kStages>(input, weight, input_sf, weight_sf, out, alpha, input.device());
+#else
+    TORCH_CHECK(false, "matmul_ada_mxf4_bf16_tn was optimized for sm120. For other architectures, please use matmul_mxf4_bf16_tn instead");
+#endif
 }

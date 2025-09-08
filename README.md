@@ -29,6 +29,7 @@ Thus, for an $M \times K$ matrix $A$, the corresponding scale matrix $\mathrm{SF
     - Quantization:
         - Abs-Max supported.
 - Multiple rotation sizes (16/32/64/128) supported for both MXFP4 and NVFP4.
+- vLLM Integration ([PR #24440](https://github.com/vllm-project/vllm/pull/24440))
 
 ### Features from QuTLASS v0.0.1:
 - MXFP4 microscaling support, with

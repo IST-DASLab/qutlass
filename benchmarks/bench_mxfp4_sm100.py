@@ -14,8 +14,7 @@
 # limitations under the License.
 #
 
-import sys
-import numpy as np
+import os
 import torch
 import triton
 from scipy.linalg import hadamard
@@ -160,10 +159,11 @@ for model, layers in MODELS.items():
     for K, N in layers:
         for had_size in [32,64,128]:
             print(f"{model}, N={N} K={K}, HAD={had_size}, BF16 vs MXFP4 GEMMs TFLOP/s:")
+            os.makedirs(f"benchmarks_output/bench_mxfp4_res_n{N}_k{K}_sm100", exist_ok=True)
             benchmark.run(
                 print_data=True,
                 show_plots=True,
-                save_path=f"bench_mxfp4_res_n{N}_k{K}",
+                save_path=f"benchmarks_output/bench_mxfp4_res_n{N}_k{K}_sm100",
                 N=N,
                 K=K,
                 had_size=had_size

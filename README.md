@@ -9,6 +9,8 @@ QuTLASS is a high-performance library designed for low-precision kernel support 
 
 QuTLASS v0.1.0 introduces 4-bit microscaling routines tailored for Large Language Model (LLM) inference on NVIDIA Blackwell GPUs.
 
+<a href='https://arxiv.org/pdf/2509.23202'><img src='https://img.shields.io/badge/ArXiv-PDF-red' height="25"></a> &nbsp; 
+
 ### Microscaling in Blackwell
 The new Blackwell architecture supports native matrix multiplication with microscaling, using scale factors in the form:
 $D = C + (A \times \mathrm{SFA}) \cdot (B \times \mathrm{SFB})$

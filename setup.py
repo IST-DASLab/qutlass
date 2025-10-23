@@ -119,7 +119,7 @@ if __name__ == "__main__":
                 sources=[
                     "qutlass/csrc/bindings.cpp",
                     "qutlass/csrc/gemm.cu",
-                    "qutlass/csrc/gemm_ada.cu",  # TODO (later): fuse into gemm.cu
+                    "qutlass/csrc/gemm_ada.cu",
                     "qutlass/csrc/fused_quantize_mx.cu",
                     "qutlass/csrc/fused_quantize_mx_mask.cu",
                     "qutlass/csrc/fused_quantize_nv.cu",

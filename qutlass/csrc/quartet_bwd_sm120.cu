@@ -431,7 +431,7 @@ int backward_t_bf16_cuda(const void* x_ptr,
     using InputDtype = __nv_bfloat16;
     dim3 grid((size_b * size_m * size_n / 32 + 8 - 1) / 8);
     dim3 block(32);
-#if TARGET_CUDA_ARCH >= 100
+#if TARGET_CUDA_ARCH == 120
     quantize_g32t_cuda_kernel<InputDtype><<<grid, block, 0, stream>>>(
         (InputDtype*) x_ptr,
         (InputDtype*) h_ptr,
@@ -463,7 +463,7 @@ int backward_qt_bf16_cuda(const void* x_e2m1_ptr,
     using InputDtype = __nv_bfloat16;
     dim3 grid((size_b * size_m * size_n / 32 + 8 - 1) / 8);
     dim3 block(32);
-#if TARGET_CUDA_ARCH >= 100
+#if TARGET_CUDA_ARCH == 120
     quantize_g32qt_cuda_kernel<InputDtype><<<grid, block, 0, stream>>>(
         (uint32_t*) x_e2m1_ptr,
         (uint8_t*) x_e8m0_ptr,

@@ -38,3 +38,10 @@ void matmul_host_nvf4_bf16_tn(torch::Tensor& D,
                               torch::Tensor const& A_sf,
                               torch::Tensor const& B_sf,
                               torch::Tensor const& alpha);
+
+void matmul_host_mxf8_bf16_tn(torch::Tensor& D,
+                              torch::Tensor const& A,
+                              torch::Tensor const& B,
+                              torch::Tensor const& A_sf,
+                              torch::Tensor const& B_sf,
+                              torch::Tensor const& alpha);

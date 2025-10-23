@@ -1,15 +1,16 @@
-# QuTLASS v0.1.0
+# QuTLASS v0.2.0
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-yellow.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![CUDA 12.8](https://img.shields.io/badge/CUDA-12.8-green.svg)](https://developer.nvidia.com/cuda-toolkit)
-[![Static Badge](https://img.shields.io/badge/CUTLASS-4.0-purple)](https://github.com/NVIDIA/cutlass)
-[![Static Badge](https://img.shields.io/badge/PyTorch-2.7-red)](https://download.pytorch.org/whl/nightly/cu128)
+[![Static Badge](https://img.shields.io/badge/CUTLASS-4.2.1-purple)](https://github.com/NVIDIA/cutlass)
+[![Static Badge](https://img.shields.io/badge/PyTorch-2.8-red)](https://download.pytorch.org/whl/nightly/cu128)
 
 QuTLASS is a high-performance library designed for low-precision kernel support in deep learning quantization, built on top of [NVIDIA CUTLASS](https://github.com/NVIDIA/cutlass).
 
-QuTLASS v0.1.0 introduces 4-bit microscaling routines tailored for Large Language Model (LLM) inference on NVIDIA Blackwell GPUs.
+QuTLASS introduces 4-bit microscaling routines tailored for quantized Large Language Model (LLM) inference and training on NVIDIA Blackwell GPUs.
 
-<a href='https://arxiv.org/pdf/2509.23202'><img src='https://img.shields.io/badge/ArXiv-PDF-red' height="25"></a> &nbsp; 
+[![arXiv](https://img.shields.io/badge/arXiv-2509.23202-b31b1b.svg)](https://arxiv.org/pdf/2509.23202)
+[![arXiv](https://img.shields.io/badge/arXiv-2505.14669-b31b1b.svg)](https://arxiv.org/abs/2505.14669)
 
 ### Microscaling in Blackwell
 The new Blackwell architecture supports native matrix multiplication with microscaling, using scale factors in the form:
@@ -58,10 +59,10 @@ Thus, for an $M \times K$ matrix $A$, the corresponding scale matrix $\mathrm{SF
 
 ### Installation:
 
-1. Install PyTorch nightly with CUDA 12.8 support:
+1. Install requirements:
 
 ```bash
-pip install --pre torch torchvision torchaudio --index-url https://download.pytorch.org/whl/nightly/cu128
+pip install -r requirements.txt
 ```
 
 2. Install QuTLASS (in editable mode):

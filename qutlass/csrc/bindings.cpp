@@ -30,7 +30,7 @@
 
 #include "include/gemm.h"
 #include "include/fused_quantize_host.h"
-
+#include "include/backward_host.h"
 
 namespace QUTLASS {
 
@@ -136,6 +136,27 @@ torch::Tensor matmul_ada_mxf4_bf16_tn(torch::Tensor const&A,
     return C;
 }
 
+torch::Tensor matmul_mxf8_bf16_tn(torch::Tensor const& A,
+                                  torch::Tensor const& B,
+                                  torch::Tensor const& A_sf,
+                                  torch::Tensor const& B_sf,
+                                  torch::Tensor const& alpha)
+{
+    torch::checkAllContiguous("matmul_mxf8_bf16_tn", {{A, "A", 0},
+                                                      {B, "B", 1}});
+    torch::checkDeviceType("matmul_mxf8_bf16_tn", {A, B}, at::DeviceType::CUDA);
+
+    torch::checkAllSameGPU("matmul_mxf8_bf16_tn", {{A, "A", 0},
+                                                   {B, "B", 1}});
+    uint32_t M = A.size(0);
+    uint32_t N = B.size(0);
+    auto OUT = torch::empty({M, N}, torch::dtype(torch::kBFloat16).device(A.device()));
+
+    matmul_host_mxf8_bf16_tn(OUT, A, B, A_sf, B_sf, alpha);
+
+    return OUT;
+}
+
 std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeMxQuest(torch::Tensor const& A,
                                                               torch::Tensor const& B,
                                                               torch::Tensor& OUT,
@@ -170,6 +191,42 @@ std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeMxQuest(torch::Tensor cons
     }
 
     return std::make_tuple(OUT, OUT_sf);
+}
+
+std::tuple<torch::Tensor, torch::Tensor, torch::Tensor> fusedQuantizeMxQuestWithMask(
+                                                                    torch::Tensor const& A,
+                                                                    torch::Tensor const& B,
+                                                                    torch::Tensor& OUT,
+                                                                    torch::Tensor& OUT_sf,
+                                                                    torch::Tensor& OUT_mask)
+{
+    torch::checkAllContiguous("fusedQuantizeMxQuestWithMask", {{A, "A", 0},
+                                                               {B, "B", 1},
+                                                               {OUT, "OUT", 2},
+                                                               {OUT_sf, "OUT_sf", 3},
+                                                               {OUT_mask, "OUT_mask", 4}});
+    torch::checkDeviceType("fusedQuantizeMxQuestWithMask", {A, B, OUT, OUT_sf, OUT_mask}, at::DeviceType::CUDA);
+    torch::checkAllSameGPU("fusedQuantizeMxQuestWithMask", {{A, "A", 0},
+                                                            {B, "B", 1},
+                                                            {OUT, "OUT", 2},
+                                                            {OUT_sf, "OUT_sf", 3},
+                                                            {OUT_mask, "OUT_mask", 4}});
+    TORCH_CHECK(A.scalar_type() == at::kBFloat16, "A must be bf16");
+    TORCH_CHECK(B.scalar_type() == at::kBFloat16, "B must be bf16");
+    TORCH_CHECK(B.size(0) == B.size(1), "Rotation matrix must be square");
+
+    uint32_t HAD_GS = B.size(0);
+    TORCH_CHECK((A.numel()%HAD_GS)==0, "A must be divisible by", HAD_GS);
+
+    if(HAD_GS==32){
+        fusedQuantizeMxQuestWithMask_host(OUT, OUT_sf, OUT_mask, A, B);
+    } else {
+        TORCH_CHECK(false,
+                    "Unsupported rotation size ", HAD_GS,
+                    "; expected 32.");
+    }
+
+    return std::make_tuple(OUT, OUT_sf, OUT_mask);
 }
 
 std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeMxAbsMax(torch::Tensor const& A,
@@ -215,18 +272,18 @@ std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeMxAbsMax(torch::Tensor con
     return std::make_tuple(OUT, OUT_sf);
 }
 
-std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeNv(torch::Tensor const& A,
+std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeNvQuest(torch::Tensor const& A,
                                                          torch::Tensor const& B,
                                                          torch::Tensor& OUT,
                                                          torch::Tensor& OUT_sf,
                                                          torch::Tensor const& global_scale)
 {
-    torch::checkAllContiguous("fusedQuantizeNv", {{A, "A", 0},
+    torch::checkAllContiguous("fusedQuantizeNvQuest", {{A, "A", 0},
                                                   {B, "B", 1},
                                                   {OUT, "OUT", 2},
                                                   {OUT_sf, "OUT_sf", 3}});
-    torch::checkDeviceType("fusedQuantizeNv", {A, B, OUT, OUT_sf, global_scale}, at::DeviceType::CUDA);
-    torch::checkAllSameGPU("fusedQuantizeNv", {{A, "A", 0},
+    torch::checkDeviceType("fusedQuantizeNvQuest", {A, B, OUT, OUT_sf, global_scale}, at::DeviceType::CUDA);
+    torch::checkAllSameGPU("fusedQuantizeNvQuest", {{A, "A", 0},
                                                {B, "B", 1},
                                                {OUT, "OUT", 2},
                                                {OUT_sf, "OUT_sf", 3},
@@ -241,16 +298,62 @@ std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeNv(torch::Tensor const& A,
     TORCH_CHECK((A.numel()%HAD_GS)==0, "A must be divisible by", HAD_GS);
 
     if(HAD_GS==16){
-        fusedQuantizeNv_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvQuest_host(OUT, OUT_sf, A, B, global_scale);
     } else if(HAD_GS==32){
-        fusedQuantizeNvHad32_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvQuestHad32_host(OUT, OUT_sf, A, B, global_scale);
     } else if(HAD_GS==64){
-        fusedQuantizeNvHad64_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvQuestHad64_host(OUT, OUT_sf, A, B, global_scale);
+    } else if(HAD_GS==128){
+//#if TARGET_CUDA_ARCH == 100
+//        fusedQuantizeNvQuest_host_sm100(OUT, OUT_sf, A, B, global_scale);
+//#elif TARGET_CUDA_ARCH == 120
+        fusedQuantizeNvQuestHad128_host(OUT, OUT_sf, A, B, global_scale);
+//#endif
+    } else {
+        TORCH_CHECK(false,
+                    "Unsupported rotation size ", HAD_GS,
+                    "; expected 16, 32, 64, or 128.");
+    }
+
+    return std::make_tuple(OUT, OUT_sf);
+}
+
+std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeNvAbsMax(torch::Tensor const& A,
+                                                         torch::Tensor const& B,
+                                                         torch::Tensor& OUT,
+                                                         torch::Tensor& OUT_sf,
+                                                         torch::Tensor const& global_scale)
+{
+    torch::checkAllContiguous("fusedQuantizeNvAbsMax", {{A, "A", 0},
+                                                  {B, "B", 1},
+                                                  {OUT, "OUT", 2},
+                                                  {OUT_sf, "OUT_sf", 3}});
+    torch::checkDeviceType("fusedQuantizeNvAbsMax", {A, B, OUT, OUT_sf, global_scale}, at::DeviceType::CUDA);
+    torch::checkAllSameGPU("fusedQuantizeNvAbsMax", {{A, "A", 0},
+                                               {B, "B", 1},
+                                               {OUT, "OUT", 2},
+                                               {OUT_sf, "OUT_sf", 3},
+                                               {global_scale, "global_scale", 4}});
+    TORCH_CHECK(A.scalar_type() == at::kBFloat16, "A must be bf16");
+    TORCH_CHECK(B.scalar_type() == at::kBFloat16, "B must be bf16");
+    TORCH_CHECK(global_scale.scalar_type() == at::kFloat, "global_scale must be float");
+    TORCH_CHECK(global_scale.dim() == 1 && global_scale.size(0) == 1, "global_scale must be a scalar");
+    TORCH_CHECK(B.size(0) == B.size(1), "Rotation matrix must be square");
+
+    uint32_t HAD_GS = B.size(0);
+    TORCH_CHECK((A.numel()%HAD_GS)==0, "A must be divisible by", HAD_GS);
+
+    if(HAD_GS==16){
+        fusedQuantizeNvAbsMax_host(OUT, OUT_sf, A, B, global_scale);
+    } else if(HAD_GS==32){
+        fusedQuantizeNvAbsMaxHad32_host(OUT, OUT_sf, A, B, global_scale);
+    } else if(HAD_GS==64){
+        fusedQuantizeNvAbsMaxHad64_host(OUT, OUT_sf, A, B, global_scale);
     } else if(HAD_GS==128){
 #if TARGET_CUDA_ARCH == 100
         fusedQuantizeNvAbsMax_host_sm100(OUT, OUT_sf, A, B, global_scale);
 #elif TARGET_CUDA_ARCH == 120
-        fusedQuantizeNvHad128_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvAbsMaxHad128_host(OUT, OUT_sf, A, B, global_scale);
 #endif
     } else {
         TORCH_CHECK(false,
@@ -261,14 +364,57 @@ std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeNv(torch::Tensor const& A,
     return std::make_tuple(OUT, OUT_sf);
 }
 
+void backward_t_bf16(const torch::Tensor& x,
+                     const torch::Tensor& h,
+                     torch::Tensor& xh_e2m1,
+                     torch::Tensor& xh_e8m0)
+{
+    int err = backward_t_bf16_cuda(
+        x.data_ptr(),
+        h.data_ptr(),
+        xh_e2m1.data_ptr(),
+        xh_e8m0.data_ptr(),
+        x.size(-1),
+        x.size(-2),
+        x.numel() / (x.size(-2) * x.size(-1)),
+        at::cuda::getCurrentCUDAStream(h.device().index())
+    );
+}
+
+void backward_qt_bf16(const torch::Tensor& x_e2m1,
+                      const torch::Tensor& x_e8m0,
+                      const torch::Tensor& h,
+                      const torch::Tensor& alpha,
+                      torch::Tensor& xh_e2m1,
+                      torch::Tensor& xh_e8m0) {
+    int err = backward_qt_bf16_cuda(
+        x_e2m1.data_ptr(),
+        x_e8m0.data_ptr(),
+        h.data_ptr(),
+        alpha.data_ptr(),
+        xh_e2m1.data_ptr(),
+        xh_e8m0.data_ptr(),
+        x_e2m1.size(-1) * 2,
+        x_e2m1.size(-2),
+        x_e2m1.numel() / (x_e2m1.size(-2) * x_e2m1.size(-1)),
+        at::cuda::getCurrentCUDAStream(h.device().index())
+    );
+}
+
+
 TORCH_LIBRARY(_qutlass_C, m) {
   m.def("matmul_mxf4_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
   m.def("matmul_nvf4_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
   m.def("matmul_ada_mxf4_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
 
   m.def("fusedQuantizeMxQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf) -> (Tensor, Tensor)");
+  m.def("fusedQuantizeMxQuestWithMask(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor OUT_mask) -> (Tensor, Tensor, Tensor)");
   m.def("fusedQuantizeMxAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf) -> (Tensor, Tensor)");
-  m.def("fusedQuantizeNv(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
+  m.def("fusedQuantizeNvQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
+  m.def("fusedQuantizeNvAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
+
+  //m.def("backward_t_bf16(Tensor x_e2m1, Tensor x_e8m0, Tensor h, float alpha, Tensor xh_e2m1, Tensor xh_e8m0) -> void");
+  //m.def("backward_qt_bf16(Tensor x, Tensor h, Tensor xh_e2m1, Tensor xh_e8m0) -> void");
 }
 
 TORCH_LIBRARY_IMPL(_qutlass_C, CUDA, m) {
@@ -277,8 +423,13 @@ TORCH_LIBRARY_IMPL(_qutlass_C, CUDA, m) {
   m.impl("matmul_ada_mxf4_bf16_tn",  TORCH_FN(QUTLASS::matmul_ada_mxf4_bf16_tn));
 
   m.impl("fusedQuantizeMxQuest",     TORCH_FN(QUTLASS::fusedQuantizeMxQuest));
+  m.impl("fusedQuantizeMxQuestWithMask", TORCH_FN(QUTLASS::fusedQuantizeMxQuestWithMask));
   m.impl("fusedQuantizeMxAbsMax",    TORCH_FN(QUTLASS::fusedQuantizeMxAbsMax));
-  m.impl("fusedQuantizeNv",          TORCH_FN(QUTLASS::fusedQuantizeNv));
+  m.impl("fusedQuantizeNvQuest",     TORCH_FN(QUTLASS::fusedQuantizeNvQuest));
+  m.impl("fusedQuantizeNvAbsMax",    TORCH_FN(QUTLASS::fusedQuantizeNvAbsMax));
+
+  //m.impl("backward_t_bf16",          TORCH_FN(QUTLASS::backward_t_bf16));
+  //m.impl("backward_qt_bf16",         TORCH_FN(QUTLASS::backward_qt_bf16));
 }
 
 //====== pybind ======
@@ -292,9 +443,16 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m
     m.def("matmul_mxf4_bf16_tn",     &matmul_mxf4_bf16_tn,     "matmul_mxf4_bf16_tn");
     m.def("matmul_ada_mxf4_bf16_tn", &matmul_ada_mxf4_bf16_tn, "matmul_ada_mxf4_bf16_tn");
     m.def("matmul_nvf4_bf16_tn",     &matmul_nvf4_bf16_tn,     "matmul_nvf4_bf16_tn");
+    m.def("matmul_mxf8_bf16_tn",     &matmul_mxf8_bf16_tn,     "matmul_mxf8_bf16_tn");
+
     m.def("fusedQuantizeMxQuest",  &QUTLASS::fusedQuantizeMxQuest,  "fusedQuantizeMxQuest");
+    m.def("fusedQuantizeMxQuestWithMask",  &QUTLASS::fusedQuantizeMxQuestWithMask,  "fusedQuantizeMxQuestWithMask");
     m.def("fusedQuantizeMxAbsMax", &QUTLASS::fusedQuantizeMxAbsMax, "fusedQuantizeMxAbsMax");
-    m.def("fusedQuantizeNv",       &QUTLASS::fusedQuantizeNv,       "fusedQuantizeNv");
+    m.def("fusedQuantizeNvQuest",  &QUTLASS::fusedQuantizeNvQuest,  "fusedQuantizeNvQuest");
+    m.def("fusedQuantizeNvAbsMax", &QUTLASS::fusedQuantizeNvAbsMax, "fusedQuantizeNvAbsMax");
+
+    m.def("backward_t_bf16",  &backward_t_bf16,  "backward_t_bf16");
+    m.def("backward_qt_bf16", &backward_qt_bf16, "backward_qt_bf16");
 }
 #endif
 }

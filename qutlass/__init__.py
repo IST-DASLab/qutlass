@@ -74,28 +74,6 @@ def matmul_mxf4_bf16_tn(
         raise ValueError(f"invalid backend {backend!r}; use 'cutlass' or 'flashinfer'")
 
 
-def matmul_mxf8_mxf4_bf16_tn(a: torch.Tensor,
-                              b: torch.Tensor,
-                              a_sf: torch.Tensor,
-                              b_sf: torch.Tensor,
-                              alpha: torch.Tensor) -> torch.Tensor:
-    return qutlass._CUDA.matmul_mxf8_mxf4_bf16_tn(a, b, a_sf, b_sf, alpha)
-
-def matmul_mxf8_mxf4_bf16_nt(a: torch.Tensor,
-                              b: torch.Tensor,
-                              a_sf: torch.Tensor,
-                              b_sf: torch.Tensor,
-                              alpha: torch.Tensor) -> torch.Tensor:
-    return qutlass._CUDA.matmul_mxf8_mxf4_bf16_nt(a, b, a_sf, b_sf, alpha)
-
-def matmul_mxf8_mxf4_bf16_tt(a: torch.Tensor,
-                              b: torch.Tensor,
-                              a_sf: torch.Tensor,
-                              b_sf: torch.Tensor,
-                              alpha: torch.Tensor) -> torch.Tensor:
-    return qutlass._CUDA.matmul_mxf8_mxf4_bf16_tt(a, b, a_sf, b_sf, alpha)
-
-
 def matmul_ada_mxf4_bf16_tn(
     a: torch.Tensor,
     b: torch.Tensor,
@@ -157,20 +135,6 @@ def matmul_mxf8_bf16_tn(a: torch.Tensor,
                         block_scale_b: torch.Tensor,
                         alpha: torch.Tensor) -> torch.Tensor:
     return qutlass._CUDA.matmul_mxf8_bf16_tn(a, b, block_scale_a, block_scale_b, alpha)
-
-def matmul_mxf8_bf16_nt(a: torch.Tensor,
-                        b: torch.Tensor,
-                        block_scale_a: torch.Tensor,
-                        block_scale_b: torch.Tensor,
-                        alpha: torch.Tensor) -> torch.Tensor:
-    return qutlass._CUDA.matmul_mxf8_bf16_nt(a, b, block_scale_a, block_scale_b, alpha)
-
-def matmul_mxf8_bf16_tt(a: torch.Tensor,
-                        b: torch.Tensor,
-                        block_scale_a: torch.Tensor,
-                        block_scale_b: torch.Tensor,
-                        alpha: torch.Tensor) -> torch.Tensor:
-    return qutlass._CUDA.matmul_mxf8_bf16_tt(a, b, block_scale_a, block_scale_b, alpha)
 
 def matmul_mxf8_bf16_nn(a: torch.Tensor,
                         b: torch.Tensor,

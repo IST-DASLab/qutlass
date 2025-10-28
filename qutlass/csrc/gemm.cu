@@ -378,17 +378,54 @@ void matmul_host_mxf8_bf16_tn(torch::Tensor& D,
                         ElementB, LayoutBTag, AlignmentB>::Gemm, cutlass::float_ue8m0_t
                     >(D, A, B, A_sf, B_sf, alpha, m, n, k, A.device());
     }
-#elif TARGET_CUDA_ARCH == 120
-    using ArchTag = cutlass::arch::Sm120;
-    using MmaTileShape       = Shape<_128,_128,_128>;
-    using ClusterShape       = Shape<_1,_1,_1>;
-    using PerSmTileShape_MNK = Shape<_128,_128,_128>;
+#else
+    TORCH_CHECK(false, "Unsupported CUDA arch");
+#endif
+}
 
-    runGemm<FpGemm<MmaTileShape, ClusterShape, PerSmTileShape_MNK,
-                    ArchTag,
-                    ElementA, LayoutATag, AlignmentA,
-                    ElementB, LayoutBTag, AlignmentB>::Gemm, cutlass::float_ue8m0_t
-                >(D, A, B, A_sf, B_sf, alpha, m, n, k, A.device());
+void matmul_host_mxf8_bf16_nn(torch::Tensor& D,
+                              torch::Tensor const& A,
+                              torch::Tensor const& B,
+                              torch::Tensor const& A_sf,
+                              torch::Tensor const& B_sf,
+                              torch::Tensor const& alpha)
+{
+    auto const m = A.sizes()[1];
+    auto const n = B.sizes()[0];
+    auto const k = A.sizes()[0];
+
+    using ElementA   = cutlass::mx_float8_t<cutlass::float_e4m3_t>;
+    using LayoutATag = cutlass::layout::ColumnMajor;
+    static constexpr int AlignmentA = 16;
+
+    using ElementB   = cutlass::mx_float8_t<cutlass::float_e4m3_t>;
+    using LayoutBTag = cutlass::layout::ColumnMajor;
+    static constexpr int AlignmentB = 16;
+
+#if TARGET_CUDA_ARCH == 100
+    using ArchTag = cutlass::arch::Sm100;
+
+    if(m<=8192){
+        using MmaTileShape       = Shape<_256,_128,_128>;
+        using ClusterShape       = Shape<_2,_1,_1>;
+        using PerSmTileShape_MNK = Shape<_128,_128,_128>;
+
+        runGemm<FpGemm<MmaTileShape, ClusterShape, PerSmTileShape_MNK,
+                        ArchTag,
+                        ElementA, LayoutATag, AlignmentA,
+                        ElementB, LayoutBTag, AlignmentB>::Gemm, cutlass::float_ue8m0_t
+                    >(D, A, B, A_sf, B_sf, alpha, m, n, k, A.device());
+    } else {
+        using MmaTileShape       = Shape<_256,_256,_128>;
+        using ClusterShape       = Shape<_2,_1,_1>;
+        using PerSmTileShape_MNK = Shape<_128,_256,_128>;
+
+        runGemm<FpGemm<MmaTileShape, ClusterShape, PerSmTileShape_MNK,
+                        ArchTag,
+                        ElementA, LayoutATag, AlignmentA,
+                        ElementB, LayoutBTag, AlignmentB>::Gemm, cutlass::float_ue8m0_t
+                    >(D, A, B, A_sf, B_sf, alpha, m, n, k, A.device());
+    }
 #else
     TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif

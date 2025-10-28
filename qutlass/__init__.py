@@ -16,7 +16,7 @@
 
 import torch
 import qutlass._CUDA
-from qutlass.utils import get_padded_shape_mx, get_padded_shape_nv
+from qutlass.utils import get_padded_shape_mx, get_padded_shape_nv, pad_to_block
 from typing import Literal
 
 import warnings
@@ -74,6 +74,28 @@ def matmul_mxf4_bf16_tn(
         raise ValueError(f"invalid backend {backend!r}; use 'cutlass' or 'flashinfer'")
 
 
+def matmul_mxf8_mxf4_bf16_tn(a: torch.Tensor,
+                              b: torch.Tensor,
+                              a_sf: torch.Tensor,
+                              b_sf: torch.Tensor,
+                              alpha: torch.Tensor) -> torch.Tensor:
+    return qutlass._CUDA.matmul_mxf8_mxf4_bf16_tn(a, b, a_sf, b_sf, alpha)
+
+def matmul_mxf8_mxf4_bf16_nt(a: torch.Tensor,
+                              b: torch.Tensor,
+                              a_sf: torch.Tensor,
+                              b_sf: torch.Tensor,
+                              alpha: torch.Tensor) -> torch.Tensor:
+    return qutlass._CUDA.matmul_mxf8_mxf4_bf16_nt(a, b, a_sf, b_sf, alpha)
+
+def matmul_mxf8_mxf4_bf16_tt(a: torch.Tensor,
+                              b: torch.Tensor,
+                              a_sf: torch.Tensor,
+                              b_sf: torch.Tensor,
+                              alpha: torch.Tensor) -> torch.Tensor:
+    return qutlass._CUDA.matmul_mxf8_mxf4_bf16_tt(a, b, a_sf, b_sf, alpha)
+
+
 def matmul_ada_mxf4_bf16_tn(
     a: torch.Tensor,
     b: torch.Tensor,
@@ -129,14 +151,33 @@ def matmul_nvf4_bf16_tn(
         raise ValueError(f"invalid backend {backend!r}; use 'cutlass' or 'flashinfer'")
 
 
-def matmul_mxf8_bf16_tn(
-    a: torch.Tensor,
-    b: torch.Tensor,
-    block_scale_a: torch.Tensor,
-    block_scale_b: torch.Tensor,
-    alpha: torch.Tensor,
-) -> torch.Tensor:
+def matmul_mxf8_bf16_tn(a: torch.Tensor,
+                        b: torch.Tensor,
+                        block_scale_a: torch.Tensor,
+                        block_scale_b: torch.Tensor,
+                        alpha: torch.Tensor) -> torch.Tensor:
     return qutlass._CUDA.matmul_mxf8_bf16_tn(a, b, block_scale_a, block_scale_b, alpha)
+
+def matmul_mxf8_bf16_nt(a: torch.Tensor,
+                        b: torch.Tensor,
+                        block_scale_a: torch.Tensor,
+                        block_scale_b: torch.Tensor,
+                        alpha: torch.Tensor) -> torch.Tensor:
+    return qutlass._CUDA.matmul_mxf8_bf16_nt(a, b, block_scale_a, block_scale_b, alpha)
+
+def matmul_mxf8_bf16_tt(a: torch.Tensor,
+                        b: torch.Tensor,
+                        block_scale_a: torch.Tensor,
+                        block_scale_b: torch.Tensor,
+                        alpha: torch.Tensor) -> torch.Tensor:
+    return qutlass._CUDA.matmul_mxf8_bf16_tt(a, b, block_scale_a, block_scale_b, alpha)
+
+def matmul_mxf8_bf16_nn(a: torch.Tensor,
+                        b: torch.Tensor,
+                        block_scale_a: torch.Tensor,
+                        block_scale_b: torch.Tensor,
+                        alpha: torch.Tensor) -> torch.Tensor:
+    return qutlass._CUDA.matmul_mxf8_bf16_nn(a, b, block_scale_a, block_scale_b, alpha)
 
 
 def fusedQuantizeMx(
@@ -146,7 +187,7 @@ def fusedQuantizeMx(
     *,
     method: Literal["quest", "abs_max"] = "quest",
     return_mask: bool = False,
-):  # -> tuple[torch.Tensor, torch.Tensor, torch.Tensor | None]:
+):
     padded_rows, padded_cols = get_padded_shape_mx(a)
     xh_e2m1 = torch.empty(
         *a.shape[:-1], a.size(-1) // 2, dtype=torch.uint8, device=a.device
@@ -273,3 +314,31 @@ def backward_qt_bf16(
     qutlass._CUDA.backward_qt_bf16(x_e2m1, x_e8m0, h, alpha, xh_e2m1, xh_e8m0)
 
     return xh_e2m1, xh_e8m0
+
+def backward_bf16_square_double_mxfp8(x_bf16: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    if x_bf16.size(0) % 128 != 0:
+        x_bf16 = pad_to_block(x_bf16, [0], 128)
+    x_fp8 = torch.empty_like(x_bf16, dtype=torch.float8_e4m3fn)
+    row_scales = torch.empty(x_bf16.shape[0], x_bf16.shape[1] // 32, device=x_bf16.device, dtype=torch.float8_e8m0fnu)
+    column_scales = torch.empty(x_bf16.shape[1], x_bf16.shape[0] // 32, device=x_bf16.device, dtype=torch.float8_e8m0fnu)
+
+    qutlass._CUDA.backward_bf16_square_double_mxfp8(x_bf16, x_fp8, row_scales, column_scales)
+
+    return x_fp8, row_scales, column_scales
+
+def mxfp4_transpose_mxfp8(x_fp4: torch.Tensor, scales: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    # TODO: padding in kernel
+    # >>>>
+    if x_fp4.size(0) % 256 != 0:
+        m = x_fp4.shape[0]
+        m_up128 = ((m - 1) // 256) * 256 + 256
+        x_fp4 = pad_to_block(x_fp4, [0], 256)
+        scales[m:m_up128] = 1.0
+    # <<<<
+
+    x_fp8 = torch.empty(x_fp4.shape[1] * 2, x_fp4.shape[0], device=x_fp4.device, dtype=torch.float8_e4m3fn)
+    shared_exps = torch.empty(x_fp4.shape[1] * 2, x_fp4.shape[0] // 32, device=x_fp4.device, dtype=torch.float8_e8m0fnu)
+
+    qutlass._CUDA.mxfp4_transpose_mxfp8(x_fp4, scales, x_fp8, shared_exps)
+
+    return x_fp8, shared_exps

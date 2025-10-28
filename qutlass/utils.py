@@ -191,3 +191,14 @@ def to_blocked(input_matrix, use_triton_kernel: bool = False) -> torch.Tensor:
     rearranged = blocks.reshape(-1, 4, 32, 4).transpose(1, 2).reshape(-1, 32, 16)
 
     return rearranged.flatten()
+
+
+def pad_to_block(tensor, dims, blocksize):
+    pad_dims = [0 for _ in range(2 * len(tensor.shape))]
+    for dim in dims:
+        size = tensor.shape[dim]
+        next_multiple_of_block = ((size - 1) // blocksize + 1) * blocksize
+        delta = next_multiple_of_block - size
+        pad_dims[-2 * dim - 1] = delta
+    
+    return torch.nn.functional.pad(tensor, pad_dims, "constant", 0.0)

@@ -1,6 +1,24 @@
+/*
+ * Copyright (C) 2025 Roberto L. Castro (Roberto.LopezCastro@ist.ac.at). All Rights Reserved.
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *       http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #include <cstdint>
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
+#include <cuda_fp8.h>
+#include <cuda_fp4.h>
 #include <cuda_runtime.h>
 #include <mma.h>
 
@@ -10,11 +28,9 @@
 
 #include <backward_host.h>
 
-// Generic template for type-specific conversion
 template <typename T>
 struct TypeTraits;
 
-// Specialization for __half
 template <>
 struct TypeTraits<__half> {
     static inline __device__ float toFloat(__half val) {
@@ -44,7 +60,6 @@ struct TypeTraits<__half> {
     }
 };
 
-// Specialization for __nv_bfloat16
 template <>
 struct TypeTraits<__nv_bfloat16> {
     static inline __device__ float toFloat(__nv_bfloat16 val) {
@@ -431,7 +446,7 @@ int backward_t_bf16_cuda(const void* x_ptr,
     using InputDtype = __nv_bfloat16;
     dim3 grid((size_b * size_m * size_n / 32 + 8 - 1) / 8);
     dim3 block(32);
-#if TARGET_CUDA_ARCH == 120
+#if TARGET_CUDA_ARCH >= 100
     quantize_g32t_cuda_kernel<InputDtype><<<grid, block, 0, stream>>>(
         (InputDtype*) x_ptr,
         (InputDtype*) h_ptr,
@@ -442,7 +457,7 @@ int backward_t_bf16_cuda(const void* x_ptr,
         size_b
     );
 #else
-    TORCH_CHECK(false, "Unsupported CUDA arch");
+     TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
 
     return 0;
@@ -463,7 +478,7 @@ int backward_qt_bf16_cuda(const void* x_e2m1_ptr,
     using InputDtype = __nv_bfloat16;
     dim3 grid((size_b * size_m * size_n / 32 + 8 - 1) / 8);
     dim3 block(32);
-#if TARGET_CUDA_ARCH == 120
+#if TARGET_CUDA_ARCH >= 100
     quantize_g32qt_cuda_kernel<InputDtype><<<grid, block, 0, stream>>>(
         (uint32_t*) x_e2m1_ptr,
         (uint8_t*) x_e8m0_ptr,
@@ -478,5 +493,246 @@ int backward_qt_bf16_cuda(const void* x_e2m1_ptr,
 #else
     TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
+    return 0;
+}
+
+
+#ifndef TILE
+#define TILE 32
+#endif
+
+#define TILE_M 32
+#define TILE_N 128
+
+__device__ inline uint8_t encode_e8m0_shiftm8(float amax) {
+    if (amax == 0.0f) return 127;
+    __nv_bfloat16 b = __float2bfloat16_rn(amax);
+    auto* br = reinterpret_cast<__nv_bfloat16_raw*>(&b);
+    __nv_fp8_storage_t e8 = __nv_cvt_bfloat16raw_to_e8m0(*br, __NV_NOSAT, cudaRoundZero);
+    return static_cast<uint8_t>(*reinterpret_cast<uint8_t*>(&e8) - 7);
+}
+
+__global__ void k_backward_bf16_square_double_mxfp8(
+    const __nv_bfloat16* __restrict__ x_bf16, int ld_x,
+    uint8_t*             __restrict__ y_fp8,  int ld_y,
+    uint8_t*             __restrict__ row_scales, int ld_row,
+    uint8_t*             __restrict__ col_scales, int ld_col,
+    int m, int n)
+{
+    const int tile_i  = blockIdx.y;
+    const int tile_j  = blockIdx.x;
+    const int lane    = threadIdx.x%32;
+    const int warp_id = threadIdx.x/32;
+
+    const int gi  = tile_i * TILE_M + lane;
+    const int gi0  = tile_i * TILE_M;
+
+    const int gj0 = tile_j * TILE_N;
+
+    if (gi >= m) return;
+
+    __shared__ __nv_bfloat16 tile[TILE_M*(TILE_N+8)];
+
+    const __nv_bfloat16* in_row = x_bf16 + gi * ld_x + gj0;
+
+    const float4* x_bf16_f4 = reinterpret_cast<const float4*>(x_bf16 + gi0*ld_x + gj0 + warp_id*(TILE/4)*ld_x + (lane/16)*ld_x + (lane%16)*8);
+    const float4* tile_f4   = reinterpret_cast<const float4*>(tile + warp_id*(TILE/4)*(TILE_N+8) + (lane/16)*(TILE_N+8) + (lane%16)*8);
+
+    __nv_bfloat16 row_vals[TILE];
+
+    #pragma unroll
+    for (int v = 0; v < 4; ++v) {
+        *((float4*) tile_f4 + v*(TILE_N+8)/4) = *((float4*) x_bf16_f4 + v*ld_x/4); //2/8
+    }
+
+    __syncthreads();
+
+    #pragma unroll
+    for (int k = 0; k < TILE/8; ++k) {
+        *reinterpret_cast<float4*>(row_vals + k*8) = *reinterpret_cast<float4*>(tile + warp_id*(TILE) + lane*(TILE_N+8) + k*8);
+    }
+
+    float rmax = 0.f;
+    #pragma unroll
+    for (int k = 0; k < TILE; ++k) {
+        rmax = fmaxf(rmax, fabsf(__bfloat162float(row_vals[k])));
+    }
+
+    #pragma unroll
+    for (int off = 16; off > 0; off >>= 1)
+        rmax = fmaxf(rmax, __shfl_xor_sync(0xFFFFFFFF, rmax, off));
+    const float amax_tile = __shfl_sync(0xFFFFFFFF, rmax, 0);
+
+    const uint8_t ebyte = encode_e8m0_shiftm8(amax_tile);
+
+    __nv_fp8_storage_t e8; *reinterpret_cast<uint8_t*>(&e8) = ebyte;
+    __nv_bfloat16_raw s_raw = __nv_cvt_e8m0_to_bf16raw(e8);
+    const float qscale = __bfloat162float(*reinterpret_cast<__nv_bfloat16*>(&s_raw));
+
+    if (tile_j < n/TILE_N) {
+        row_scales[(blockIdx.y*TILE_M + lane)*ld_row + (blockIdx.x)*(TILE_N/TILE) + warp_id] = ebyte;
+    }
+
+    const int go = gj0 + lane;
+    if (go < n) {
+        col_scales[(blockIdx.x*TILE_N*2+lane)*ld_col + (warp_id*TILE*2+lane)*ld_col + tile_i] = ebyte;
+    }
+
+    uint8_t out_bytes[TILE];
+
+    #pragma unroll
+    for (int k = 0; k < TILE; ++k) {
+        const float q = __bfloat162float(row_vals[k]) / qscale;
+        __nv_bfloat16 qb = __float2bfloat16_rn(q);
+        __nv_fp8_storage_t f8 = __nv_cvt_bfloat16raw_to_fp8(*reinterpret_cast<__nv_bfloat16_raw*>(&qb),
+                                                            __NV_SATFINITE, __NV_E4M3);
+        out_bytes[k] = *reinterpret_cast<uint8_t*>(&f8);
+    }
+
+    const uint8_t* tile_u8 = reinterpret_cast<const uint8_t*>(tile);
+
+    *((float4*) tile_u8 + warp_id*TILE/16 + lane*(TILE_N+16)/16)     = *((float4*) out_bytes + 0);
+    *((float4*) tile_u8 + warp_id*TILE/16 + lane*(TILE_N+16)/16 + 1) = *((float4*) out_bytes + 1);
+
+    __syncthreads();
+
+    const float4* out_f4 =
+        reinterpret_cast<const float4*>(y_fp8 + gi0*ld_y + gj0 + warp_id*(TILE/4)*ld_y + (lane/8)*ld_y + (lane%8)*16);
+    const float4* out_tile_f4 =
+        reinterpret_cast<const float4*>(tile_u8 + warp_id*(TILE/4)*(TILE_N+16) + (lane/8)*(TILE_N+16) + (lane%8)*16);
+
+    *((float4*) out_f4)          = *((float4*) out_tile_f4) ;
+    *((float4*) out_f4 + ld_y/4) = *((float4*) out_tile_f4 + (TILE_N+16)/4); //4/16
+}
+
+int backward_bf16_square_double_mxfp8_cuda(const void* x_bf16,
+                                           const int m,
+                                           const int n ,
+                                           void* x_fp8,
+                                           void* row_scales,
+                                           void* column_scales,
+                                           cudaStream_t stream)
+{
+    dim3 grid(n/TILE_N, m/TILE_M, 1);
+    dim3 block(TILE_N, 1, 1);
+
+    k_backward_bf16_square_double_mxfp8<<<grid, block, 0, stream>>>(
+        (const __nv_bfloat16*)x_bf16, n,
+        (uint8_t*) x_fp8, n,
+        (uint8_t*) row_scales, n/TILE_M,
+        (uint8_t*) column_scales, m/(TILE_M*2),
+        m, n
+    );
+
+    return 0;
+}
+
+#define TILE_N_F4 256
+
+__global__ void k_mxfp4_transpose_to_fp8_e4m3(
+    const uint8_t* __restrict__ x_fp4_pairs,  int ld_fp4,
+    const uint8_t* __restrict__ scales_e8m0,  int ld_scales,
+    uint8_t*       __restrict__ y_fp8,        int ld_y,
+    uint8_t*       __restrict__ out_e8m0,     int ld_out,
+    int m, int n)
+{
+    const int tile_i  = blockIdx.y;
+    const int tile_j  = blockIdx.x;
+    const int lane    = threadIdx.x%32;
+    const int warp_id = threadIdx.x/32;
+
+    const int gi  = tile_i * TILE_M + lane;
+    const int gi0 = tile_i * TILE_M;
+    const int gj0 = tile_j * TILE_N_F4;
+
+    const int go  = tile_j * TILE_N_F4 + lane;
+    const int ho0 = tile_i * TILE_M;
+
+    if (gi >= m || go >= n) return;
+
+    __shared__ float tile_f32[TILE][TILE_N_F4];
+
+    const uint8_t* row_fp4 = x_fp4_pairs + gi0*ld_fp4 + (gj0 >> 1) + warp_id*(TILE/8)*ld_fp4 + (lane/8)*ld_fp4 + (lane%8)*16; //TILE/8warps
+    uint4 v16 = *reinterpret_cast<const uint4*>(row_fp4);
+
+    uint8_t bytes16[16];
+    *reinterpret_cast<uint4*>(bytes16) = v16;
+
+    __nv_fp8_storage_t s8_in;
+    *reinterpret_cast<uint8_t*>(&s8_in) = scales_e8m0[gi0*ld_scales + tile_j*(TILE_N_F4/TILE) + warp_id*(TILE/8)*ld_scales + (lane/8)*ld_scales + (lane%8)];
+    __nv_bfloat16_raw s_in_raw = __nv_cvt_e8m0_to_bf16raw(s8_in);
+    const float s_in = __bfloat162float(*reinterpret_cast<__nv_bfloat16*>(&s_in_raw));
+
+    #pragma unroll
+    for (int i = 0; i < 16; ++i) {
+        __nv_fp4x2_storage_t f4x2;
+        *reinterpret_cast<uint8_t*>(&f4x2) = bytes16[i];
+        __half2_raw h2r = __nv_cvt_fp4x2_to_halfraw2(f4x2, __NV_E2M1);
+        const __half2 h2 = *reinterpret_cast<const __half2*>(&h2r);
+        const float2 f2  = __half22float2(h2);
+
+        tile_f32[threadIdx.x/8][2*i+0 + (threadIdx.x%8)*TILE] = __bfloat162float(__float2bfloat16_rn(f2.x * s_in));
+        tile_f32[threadIdx.x/8][2*i+1 + (threadIdx.x%8)*TILE] = __bfloat162float(__float2bfloat16_rn(f2.y * s_in));
+    }
+
+    __syncthreads();
+
+    //TODO: rf fst
+
+    float amax = 0.f;
+    #pragma unroll
+    for (int k = 0; k < TILE; ++k) {
+        amax = fmaxf(amax, fabsf(tile_f32[k][lane + warp_id*TILE]));
+    }
+    const uint8_t ebyte_row = encode_e8m0_shiftm8(amax);
+
+    out_e8m0[go*ld_out + tile_i + warp_id*TILE*ld_out] = ebyte_row;
+
+    __nv_fp8_storage_t e8; *reinterpret_cast<uint8_t*>(&e8) = ebyte_row;
+    __nv_bfloat16_raw s_row_raw = __nv_cvt_e8m0_to_bf16raw(e8);
+    const float qscale = __bfloat162float(*reinterpret_cast<__nv_bfloat16*>(&s_row_raw));
+
+    uint8_t out_bytes[32];
+    #pragma unroll
+    for (int k = 0; k < TILE; ++k) {
+        const float q = tile_f32[k][lane + warp_id*TILE] / qscale;
+        __nv_bfloat16 qb = __float2bfloat16_rn(q);
+        __nv_fp8_storage_t f8 =
+            __nv_cvt_bfloat16raw_to_fp8(*reinterpret_cast<__nv_bfloat16_raw*>(&qb),
+                                        __NV_SATFINITE, __NV_E4M3);
+        out_bytes[k] = *reinterpret_cast<uint8_t*>(&f8);
+    }
+
+    //TODO: smem fst
+
+    uint8_t* out_row = y_fp8 + go*ld_y + ho0 + warp_id*TILE*ld_y;
+    if (ho0 + 31 < m) {
+        *reinterpret_cast<uint4*>(out_row +  0) = *reinterpret_cast<const uint4*>(out_bytes +  0);
+        *reinterpret_cast<uint4*>(out_row + 16) = *reinterpret_cast<const uint4*>(out_bytes + 16);
+    } else {
+        #pragma unroll
+        for (int k = 0; k < TILE; ++k) if (ho0 + k < m) out_row[k] = out_bytes[k];
+    }
+}
+
+int mxfp4_transpose_mxfp8_cuda(
+    const void* x_fp4_pairs,
+    const void* scales_e8m0,
+    int m, int n,
+    void* x_fp8,
+    void* shared_exps,
+    cudaStream_t stream)
+{
+    dim3 grid(n/TILE_N_F4, m/TILE, 1);
+    dim3 block(TILE_N_F4, 1, 1);
+
+    k_mxfp4_transpose_to_fp8_e4m3<<<grid, block, 0, stream>>>(
+        (const uint8_t*) x_fp4_pairs, n/2,
+        (const uint8_t*) scales_e8m0, n/32,
+        (uint8_t*) x_fp8, m,
+        (uint8_t*) shared_exps, m/32,
+        m, n
+    );
+
     return 0;
 }

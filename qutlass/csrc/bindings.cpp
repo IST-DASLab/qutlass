@@ -143,16 +143,69 @@ torch::Tensor matmul_mxf8_bf16_tn(torch::Tensor const& A,
                                   torch::Tensor const& alpha)
 {
     torch::checkAllContiguous("matmul_mxf8_bf16_tn", {{A, "A", 0},
-                                                      {B, "B", 1}});
-    torch::checkDeviceType("matmul_mxf8_bf16_tn", {A, B}, at::DeviceType::CUDA);
+                                                      {B, "B", 1},
+                                                      {A_sf, "A_sf", 2},
+                                                      {B_sf, "B_sf", 3},
+                                                      {alpha, "alpha", 4}});
+    torch::checkDeviceType("matmul_mxf8_bf16_tn", {A, B, A_sf, B_sf, alpha}, at::DeviceType::CUDA);
 
     torch::checkAllSameGPU("matmul_mxf8_bf16_tn", {{A, "A", 0},
-                                                   {B, "B", 1}});
+                                                   {B, "B", 1},
+                                                   {A_sf, "A_sf", 2},
+                                                   {B_sf, "B_sf", 3},
+                                                   {alpha, "alpha", 4}});
+
+    TORCH_CHECK(A.scalar_type() == at::kFloat8_e4m3fn, "A must be float8_e4m3fn");
+    TORCH_CHECK(B.scalar_type() == at::kFloat8_e4m3fn, "B must be float8_e4m3fn");
+    TORCH_CHECK(A_sf.scalar_type() == at::kFloat8_e8m0fnu, "A_sf must be float8_e8m0fnu");
+    TORCH_CHECK(B_sf.scalar_type() == at::kFloat8_e8m0fnu, "B_sf must be float8_e8m0fnu");
+    TORCH_CHECK(A.dim() == 2 && B.dim() == 2, "A and B must be 2D");
+    TORCH_CHECK(A.size(1) == B.size(1), "Inner dimensions must match for A @ B.T");
+    TORCH_CHECK(A.size(1) >= 32, "A K-dim must be >= 32");
+    TORCH_CHECK(B.size(1) >= 32, "B K-dim must be >= 32");
+
     uint32_t M = A.size(0);
     uint32_t N = B.size(0);
     auto OUT = torch::empty({M, N}, torch::dtype(torch::kBFloat16).device(A.device()));
 
     matmul_host_mxf8_bf16_tn(OUT, A, B, A_sf, B_sf, alpha);
+
+    return OUT;
+}
+
+torch::Tensor matmul_mxf8_bf16_nn(torch::Tensor const& A,
+                                  torch::Tensor const& B,
+                                  torch::Tensor const& A_sf,
+                                  torch::Tensor const& B_sf,
+                                  torch::Tensor const& alpha)
+{
+    torch::checkAllContiguous("matmul_mxf8_bf16_nn", {{A, "A", 0},
+                                                      {B, "B", 1},
+                                                      {A_sf, "A_sf", 2},
+                                                      {B_sf, "B_sf", 3},
+                                                      {alpha, "alpha", 4}});
+    torch::checkDeviceType("matmul_mxf8_bf16_nn", {A, B, A_sf, B_sf, alpha}, at::DeviceType::CUDA);
+
+    torch::checkAllSameGPU("matmul_mxf8_bf16_nn", {{A, "A", 0},
+                                                   {B, "B", 1},
+                                                   {A_sf, "A_sf", 2},
+                                                   {B_sf, "B_sf", 3},
+                                                   {alpha, "alpha", 4}});
+
+    TORCH_CHECK(A.scalar_type() == at::kFloat8_e4m3fn, "A must be float8_e4m3fn");
+    TORCH_CHECK(B.scalar_type() == at::kFloat8_e4m3fn, "B must be float8_e4m3fn");
+    TORCH_CHECK(A_sf.scalar_type() == at::kFloat8_e8m0fnu, "A_sf must be float8_e8m0fnu");
+    TORCH_CHECK(B_sf.scalar_type() == at::kFloat8_e8m0fnu, "B_sf must be float8_e8m0fnu");
+    TORCH_CHECK(A.dim() == 2 && B.dim() == 2, "A and B must be 2D");
+    TORCH_CHECK(A.size(0) == B.size(1), "Inner dimensions must match for A.T @ B.T");
+    TORCH_CHECK(A.size(0) >= 32, "A K-dim must be >= 32");
+    TORCH_CHECK(B.size(1) >= 32, "B K-dim must be >= 32");
+
+    uint32_t M = A.size(1);
+    uint32_t N = B.size(0);
+    auto OUT = torch::empty({M, N}, torch::dtype(torch::kBFloat16).device(A.device()));
+
+    matmul_host_mxf8_bf16_nn(OUT, A, B, A_sf, B_sf, alpha);
 
     return OUT;
 }
@@ -401,6 +454,36 @@ void backward_qt_bf16(const torch::Tensor& x_e2m1,
     );
 }
 
+void backward_bf16_square_double_mxfp8(const torch::Tensor& x_bf16,
+    torch::Tensor& x_fp8,
+    torch::Tensor& row_scales,
+    torch::Tensor& column_scales) {
+    int err = backward_bf16_square_double_mxfp8_cuda(
+        x_bf16.data_ptr(),
+        x_bf16.size(0),
+        x_bf16.size(1),
+        x_fp8.data_ptr(),
+        row_scales.data_ptr(),
+        column_scales.data_ptr(),
+        at::cuda::getCurrentCUDAStream(x_bf16.device().index())
+    );
+}
+
+void mxfp4_transpose_mxfp8(const torch::Tensor& x_fp4,
+    const torch::Tensor& scales,
+    torch::Tensor& x_fp8,
+    torch::Tensor& shared_exps) {
+    int err = mxfp4_transpose_mxfp8_cuda(
+        x_fp4.data_ptr(),
+        scales.data_ptr(),
+        x_fp4.size(0),
+        x_fp4.size(1) * 2,
+        x_fp8.data_ptr(),
+        shared_exps.data_ptr(),
+        at::cuda::getCurrentCUDAStream(x_fp4.device().index())
+    );
+}
+
 
 TORCH_LIBRARY(_qutlass_C, m) {
   m.def("matmul_mxf4_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
@@ -444,6 +527,7 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m
     m.def("matmul_ada_mxf4_bf16_tn", &matmul_ada_mxf4_bf16_tn, "matmul_ada_mxf4_bf16_tn");
     m.def("matmul_nvf4_bf16_tn",     &matmul_nvf4_bf16_tn,     "matmul_nvf4_bf16_tn");
     m.def("matmul_mxf8_bf16_tn",     &matmul_mxf8_bf16_tn,     "matmul_mxf8_bf16_tn");
+    m.def("matmul_mxf8_bf16_nn",     &matmul_mxf8_bf16_nn,     "matmul_mxf8_bf16_nn");
 
     m.def("fusedQuantizeMxQuest",  &QUTLASS::fusedQuantizeMxQuest,  "fusedQuantizeMxQuest");
     m.def("fusedQuantizeMxQuestWithMask",  &QUTLASS::fusedQuantizeMxQuestWithMask,  "fusedQuantizeMxQuestWithMask");
@@ -453,6 +537,8 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m
 
     m.def("backward_t_bf16",  &backward_t_bf16,  "backward_t_bf16");
     m.def("backward_qt_bf16", &backward_qt_bf16, "backward_qt_bf16");
+    m.def("backward_bf16_square_double_mxfp8", &backward_bf16_square_double_mxfp8, "backward_bf16_square_double_mxfp8");
+    m.def("mxfp4_transpose_mxfp8", &mxfp4_transpose_mxfp8, "mxfp4_transpose_mxfp8");
 }
 #endif
 }

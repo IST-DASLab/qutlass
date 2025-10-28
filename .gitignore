@@ -9,5 +9,8 @@ dist
 CMakeFiles/*
 ctest/*
 *.so
-third_party/cutlass/*
+third_party/*
 bench_*/*
+.torch_inductor_cache
+benchmarks_output/*
+results/*

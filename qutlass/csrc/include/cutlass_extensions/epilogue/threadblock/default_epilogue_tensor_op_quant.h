@@ -75,6 +75,35 @@ struct DefaultEpilogueTensorOpQuantMx
 
 template <typename Shape_, typename WarpMmaTensorOp_, int PartitionsK,
           typename OutputOp_, int ElementsPerAccess, bool ScatterD = false,
+          typename PermuteDLayout = layout::NoPermute>
+struct DefaultEpilogueTensorOpQuantMxMask
+    : public DefaultEpilogueTensorOp<Shape_, WarpMmaTensorOp_, PartitionsK,
+                                     OutputOp_, ElementsPerAccess, ScatterD,
+                                     PermuteDLayout> {
+  using OutputOp = OutputOp_;
+  using DefaultEpilogueTensorOp =
+      DefaultEpilogueTensorOp<Shape_,
+                              WarpMmaTensorOp_,
+                              PartitionsK,
+                              OutputOp_,
+                              ElementsPerAccess,
+                              ScatterD,
+                              PermuteDLayout>;
+
+  using Epilogue = cutlass::epilogue::threadblock::EpilogueQuantMxMask<
+      typename DefaultEpilogueTensorOp::Shape,
+      typename DefaultEpilogueTensorOp::WarpMmaTensorOp,
+      DefaultEpilogueTensorOp::kPartitionsK,
+      typename DefaultEpilogueTensorOp::OutputTileIterator,
+      typename DefaultEpilogueTensorOp::AccumulatorFragmentIterator,
+      typename DefaultEpilogueTensorOp::WarpTileIterator,
+      typename DefaultEpilogueTensorOp::SharedLoadIterator, OutputOp,
+      typename DefaultEpilogueTensorOp::Padding,
+      DefaultEpilogueTensorOp::kFragmentsPerIteration>;
+};
+
+template <typename Shape_, typename WarpMmaTensorOp_, int PartitionsK,
+          typename OutputOp_, int ElementsPerAccess, bool ScatterD = false,
           typename PermuteDLayout = layout::NoPermute, bool is_quartet=true, int RotationSize=16>
 struct DefaultEpilogueTensorOpQuantNv
     : public DefaultEpilogueTensorOp<Shape_, WarpMmaTensorOp_, PartitionsK,

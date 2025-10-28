@@ -39,38 +39,60 @@ def get_hadamard_matrix(group_size: int, dtype: torch.dtype, device: torch.devic
     )
 
 
-def _quant_weight_nvfp4(b: torch.Tensor, forward_hadamard_matrix: torch.Tensor, global_scale: torch.Tensor, device: str):
-    weight_hf_e2m1, weight_hf_e8m0 = fusedQuantizeNv(b, forward_hadamard_matrix, global_scale)
+def _quant_weight_nvfp4(
+    b: torch.Tensor,
+    forward_hadamard_matrix: torch.Tensor,
+    global_scale: torch.Tensor,
+    device: str,
+):
+    weight_hf_e2m1, weight_hf_e8m0 = fusedQuantizeNv(
+        b, forward_hadamard_matrix, global_scale
+    )
     weight_hf_scale_block = to_blocked(weight_hf_e8m0)
     return weight_hf_e2m1, weight_hf_scale_block
 
 
 def build_nvfp4_runner(cfg, a, b, forward_hadamard_matrix, dtype, device):
-    alpha = torch.Tensor([1.]).to("cuda")
-    global_scale = torch.tensor([1.]).to("cuda")
-    weight_hf_e2m1, weight_hf_scale_block = _quant_weight_nvfp4(b, forward_hadamard_matrix, global_scale, device)
+    alpha = torch.Tensor([1.0]).to("cuda")
+    global_scale = torch.tensor([1.0]).to("cuda")
+    weight_hf_e2m1, weight_hf_scale_block = _quant_weight_nvfp4(
+        b, forward_hadamard_matrix, global_scale, device
+    )
 
     if cfg["no_a_quant"]:
         # Pre-quantize activation
-        input_hf_e2m1, input_hf_e8m0 = fusedQuantizeNv(a, forward_hadamard_matrix, global_scale)
+        input_hf_e2m1, input_hf_e8m0 = fusedQuantizeNv(
+            a, forward_hadamard_matrix, global_scale
+        )
         input_hf_scale_block = to_blocked(input_hf_e8m0)
 
         def run():
             return matmul_nvf4_bf16_tn(
-                input_hf_e2m1, weight_hf_e2m1, input_hf_scale_block, weight_hf_scale_block, alpha
+                input_hf_e2m1,
+                weight_hf_e2m1,
+                input_hf_scale_block,
+                weight_hf_scale_block,
+                alpha,
             )
 
         return run
 
     # Quantize activation on-the-fly
     def run():
-        input_hf_e2m1, input_hf_e8m0 = fusedQuantizeNv(a, forward_hadamard_matrix, global_scale)
+        input_hf_e2m1, input_hf_e8m0 = fusedQuantizeNv(
+            a, forward_hadamard_matrix, global_scale
+        )
         input_hf_scale_block = to_blocked(input_hf_e8m0)
         return qutlass.matmul_nvf4_bf16_tn(
-                input_hf_e2m1, weight_hf_e2m1, input_hf_scale_block, weight_hf_scale_block, alpha
+            input_hf_e2m1,
+            weight_hf_e2m1,
+            input_hf_scale_block,
+            weight_hf_scale_block,
+            alpha,
         )
 
     return run
+
 
 @triton.testing.perf_report(
     triton.testing.Benchmark(
@@ -98,13 +120,18 @@ def benchmark(batch_size, provider, N, K, had_size):
 
     if provider == "torch-bf16":
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: torch.nn.functional.linear(a, b),  warmup=25, rep=200, quantiles=quantiles
+            lambda: torch.nn.functional.linear(a, b),
+            warmup=25,
+            rep=200,
+            quantiles=quantiles,
         )
     else:
         cfg = PROVIDER_CFGS[provider]
-        run_quant = build_nvfp4_runner(cfg, a, b, forward_hadamard_matrix, dtype, device)
+        run_quant = build_nvfp4_runner(
+            cfg, a, b, forward_hadamard_matrix, dtype, device
+        )
         ms, min_ms, max_ms = triton.testing.do_bench(
-            lambda: run_quant(),  warmup=25, rep=200, quantiles=quantiles
+            lambda: run_quant(), warmup=25, rep=200, quantiles=quantiles
         )
 
     to_tflops = lambda t_ms: (2 * M * N * K) * 1e-12 / (t_ms * 1e-3)
@@ -117,44 +144,45 @@ MODELS = {
     #    (4096, 4096),
     #    (4096, 2 * 10752),
     #    (10752, 4096)
-    #],
+    # ],
     #'Llama13B': [
     #    (5120, 3 * 5120),
     #    (5120, 5120),
     #    (5120, 2 * 13568),
     #    (13568, 5120)
-    #],
+    # ],
     #'Llama33B': [
     #    (6656, 3 * 6656),
     #    (6656, 6656),
     #    (6656, 2 * 17664),
     #    (17664, 6656)
-    #],
+    # ],
     #'Llama65B': [
     #    (8192, 3 * 8192),
     #    (8192, 8192),
     #    (8192, 2 * 21760),
     #    (21760, 8192)
-    #],
+    # ],
     #'Qwen3-0.6B': ((1024, 2048), (1024, 1024), (1024, 6144), (3072, 1024)),
     #'Qwen3-1.7B': ((2048, 4096), (2048, 2048), (2048, 12288), (6144, 2048)),
     #'Qwen3-4B': ((2560, 2560), (2560, 2560), (2560, 19456), (9728, 2560)),
     #'Qwen3-8B': ((4096, 4096), (4096, 4096), (4096, 24576), (12288, 4096)),
     #'Qwen3-14B': [(5120, 5120), (5120, 5120), (5120, 34816), (17408, 5120)],
-    'Qwen3-32B': [(5120, 5120), (5120, 51200), (25600, 5120)],
-    'Llama-3.1-70B': [(8192, 8192), (8192, 57344), (28672, 8192)]
+    "Qwen3-32B": [(5120, 5120), (5120, 51200), (25600, 5120)],
+    "Llama-3.1-70B": [(8192, 8192), (8192, 57344), (28672, 8192)],
 }
 
 for model, layers in MODELS.items():
     for K, N in layers:
-        for had_size in [16,32,64,128]:
+        for had_size in [16, 32, 64, 128]:
             print(f"{model}, N={N} K={K}, HAD={had_size}, BF16 vs NVFP4 GEMMs TFLOP/s:")
-            os.makedirs(f"benchmarks_output/bench_nvfp4_res_n{N}_k{K}", exist_ok=True)
+            save_path = f"benchmarks_output/bench_nvfp4_res_n{N}_k{K}_had{had_size}"
+            os.makedirs(save_path, exist_ok=True)
             benchmark.run(
                 print_data=True,
                 show_plots=True,
-                save_path=f"benchmarks_output/bench_nvfp4_res_n{N}_k{K}",
+                save_path=save_path,
                 N=N,
                 K=K,
-                had_size=had_size
+                had_size=had_size,
             )

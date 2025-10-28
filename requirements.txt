@@ -1,4 +1,7 @@
+torch>=2.8
 scipy
 triton
 matplotlib
 pandas
+cmake
+pytest

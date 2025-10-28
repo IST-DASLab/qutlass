@@ -75,9 +75,9 @@ using OperatorClass       = cutlass::arch::OpClassTensorOp;
 constexpr int OutputSFVectorSize = 32;
 
 //TODO: tune
-using MmaTileShape_MNK = Shape<_256,_128,_128>;
-using ClusterShape_MNK = Shape<_4,_1,_1>;
-using PerSmTileShape_MNK = Shape<_256,_128,_128>;
+using MmaTileShape_MNK = Shape<_128,_128,_128>;
+using ClusterShape_MNK = Shape<_1,_1,_1>;
+using PerSmTileShape_MNK = Shape<_128,_128,_128>;
 
 using FusionOperation =
 cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactor<

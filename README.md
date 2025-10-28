@@ -168,8 +168,8 @@ MXFP4 delivers consistent performance gains across all batch sizes, with speedup
 In order to generate recipes for efficient and accurate weight + activation quantization for low-bit MXFP formats, please refer to [FP-Quant](https://github.com/IST-DASLab/FP-Quant).
 
 ### End-to-end Training Speedups
-The following results show how QAT restores model quality after quantization.
-Using the Transformers integration, the same MXFP4:MXFP8 QAT scheme applied to Llama-3.1-8B recovers over half of the lost performance after only ~100M training tokens.
+The following results show some QAT performance using QuTLASS.
+Using our Transformers integration, an MXFP4:MXFP8 QAT scheme applied to Llama-3.1-8B recovers over half of the lost performance after only ~100M training tokens, while training 30% faster than BF16 pseudo-quantization QAT.
 
 <div class="row"><center>
   <div class="column">

@@ -34,11 +34,16 @@ PROVIDER_CFGS = {
     "torch-bf16": dict(enabled=True),
     "mxfp4-cutlass": dict(backend="cutlass", no_a_quant=False, enabled=True),
     "mxfp4-cutlass-noquant": dict(backend="cutlass", no_a_quant=True, enabled=True),
-    "mxfp4-flashinfer": dict(backend="flashinfer", no_a_quant=False, enabled=True),
-    "mxfp4-flashinfer-noquant": dict(
-        backend="flashinfer", no_a_quant=True, enabled=True
-    ),
 }
+
+if _HAS_FLASHINFER:
+    PROVIDER_CFGS.update({
+        "mxfp4-flashinfer": dict(backend="flashinfer", no_a_quant=False, enabled=True),
+        "mxfp4-flashinfer-noquant": dict(
+            backend="flashinfer", no_a_quant=True, enabled=True
+        ),
+    })
+
 
 _enabled = [k for k, v in PROVIDER_CFGS.items() if v["enabled"]]
 
@@ -185,6 +190,7 @@ def build_mxfp4_runner(cfg, a, b, forward_hadamard_matrix, dtype, device):
             16384,
             24576,
             32768,
+            65536
         ],
         x_log=False,
         line_arg="provider",

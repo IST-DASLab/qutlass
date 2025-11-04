@@ -23,6 +23,15 @@ import qutlass
 from qutlass import matmul_mxf4_bf16_tn, fusedQuantizeMx
 from qutlass.utils import to_blocked
 
+try:
+    from flashinfer import autotune
+
+    _HAS_FLASHINFER = True
+except Exception:
+    _HAS_FLASHINFER = False
+
+BACKENDS = ["cutlass"] + (["flashinfer"] if _HAS_FLASHINFER else [])
+
 if not torch.cuda.is_available():
     pytest.skip("CUDA required for these tests.", allow_module_level=True)
 
@@ -264,7 +273,7 @@ def test_fused_quantization_quest(rot_size: int):
 @pytest.mark.parametrize("layer_idx", [0, 1, 2, 3])
 @pytest.mark.parametrize("batch", [1, 16])
 @pytest.mark.parametrize("had_size", ROT_SIZES)
-@pytest.mark.parametrize("backend", ["cutlass", "flashinfer"])
+@pytest.mark.parametrize("backend", BACKENDS)
 @torch.inference_mode()
 def test_llama_shapes(model: str, layer_idx: int, batch: int, had_size: int, backend: str):
     dtype, device = DTYPE, DEVICE

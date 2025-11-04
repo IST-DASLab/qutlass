@@ -205,11 +205,15 @@ void fusedQuantizeNvAbsMax_host_sm100(torch::Tensor& D,
                                       torch::Tensor const& B,
                                       torch::Tensor const& global_scale)
 {
+#if TARGET_CUDA_ARCH == 100
     int32_t M = A.numel() / 128;
     int32_t N = B.size(1);
     int32_t K = 128;
 
     runGemmNv(D, D_sf, A, B, global_scale, M, N, K, A.device());
+#else
+    TORCH_CHECK(false, "Unsupported CUDA arch");
+#endif
 }
 
 } // namespace QUTLASS

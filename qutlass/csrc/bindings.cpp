@@ -357,11 +357,7 @@ std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeNvQuest(torch::Tensor cons
     } else if(HAD_GS==64){
         fusedQuantizeNvQuestHad64_host(OUT, OUT_sf, A, B, global_scale);
     } else if(HAD_GS==128){
-//#if TARGET_CUDA_ARCH == 100
-//        fusedQuantizeNvQuest_host_sm100(OUT, OUT_sf, A, B, global_scale);
-//#elif TARGET_CUDA_ARCH == 120
         fusedQuantizeNvQuestHad128_host(OUT, OUT_sf, A, B, global_scale);
-//#endif
     } else {
         TORCH_CHECK(false,
                     "Unsupported rotation size ", HAD_GS,

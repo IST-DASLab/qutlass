@@ -165,7 +165,7 @@ MXFP4 delivers consistent performance gains across all batch sizes, with speedup
  </center>
 </div>
 
-In order to generate recipes for efficient and accurate weight + activation quantization for low-bit MXFP formats, please refer to [FP-Quant](https://github.com/IST-DASLab/FP-Quant).
+In order to generate recipes for efficient and accurate weight + activation quantization for low-bit MXFP and NVFP formats, please refer to [FP-Quant](https://github.com/IST-DASLab/FP-Quant).
 
 ### End-to-end Training Speedups
 The following results show some QAT performance using QuTLASS.

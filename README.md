@@ -104,6 +104,8 @@ pip install --no-build-isolation -e .
 
 in the root folder of this repository.
 
+> **Note:** To generate accurate quantized models using MXFP4 or NVFP4 formats, refer to the [FP-Quant repository](https://github.com/IST-DASLab/FP-Quant).
+
 ## 🧪 Usage example
 
 Correctness tests can be executed via ```python tests/mxfp4_test.py``` and benchmarks via ```python benchmarks/bench_mxfp4.py```.

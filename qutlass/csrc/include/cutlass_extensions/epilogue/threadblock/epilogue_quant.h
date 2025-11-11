@@ -109,6 +109,15 @@ static uint8_t f32_to_e4m3_hi(float v) {
 }
 
 CUTLASS_HOST_DEVICE
+static uint8_t f32_to_e8m0(float& v) {
+  // mask off non-exponent bits
+  uint32_t exponent = __float_as_uint(v) & 0x7f800000u;
+  uint8_t e8m0 = exponent >> 23u;
+  v = __uint_as_float(exponent);
+  return e8m0;
+}
+
+CUTLASS_HOST_DEVICE
 static float e4m3_to_f32(uint8_t hi) {
     uint16_t packed = uint16_t(hi) << 8;
     uint32_t fp16x2;
@@ -534,9 +543,7 @@ private:
                     scale = std::sqrt(var) * (2.92247856 / 6.) + 1e-8;
                 }
 
-                reinterpret_cast<uint32_t&>(scale) = (reinterpret_cast<uint32_t&>(scale) /*+ 0x7f000000*/) & 0x7f800000;
-
-                x_e8m0_ptr[0] = reinterpret_cast<uint32_t&>(scale) >> 23;
+                x_e8m0_ptr[0] = f32_to_e8m0(scale);
 
                 #pragma unroll
                 for(int w=0; w<4; w++) {
@@ -556,9 +563,7 @@ private:
                 }
 
                 float scale = abs_max + 1e-8f;
-                reinterpret_cast<uint32_t&>(scale) = (reinterpret_cast<uint32_t&>(scale) /*+ 0x7f000000*/) & 0x7f800000;
-
-                x_e8m0_ptr[0] = reinterpret_cast<uint32_t&>(scale) >> 23;
+                x_e8m0_ptr[0] = f32_to_e8m0(scale);
 
                 #pragma unroll
                 for(int w=0; w<4; w++) {
@@ -652,9 +657,7 @@ private:
                     scale = std::sqrt(var) * (2.92247856 / 6.) + 1e-8;
                 }
 
-                reinterpret_cast<uint32_t&>(scale) = (reinterpret_cast<uint32_t&>(scale) /*+ 0x7f000000*/) & 0x7f800000;
-
-                x_e8m0_ptr[0] = reinterpret_cast<uint32_t&>(scale) >> 23;
+                x_e8m0_ptr[0] = f32_to_e8m0(scale);
 
                 #pragma unroll
                 for(int w=0; w<4; w++) {
@@ -674,9 +677,7 @@ private:
                 }
 
                 float scale = abs_max + 1e-8f;
-                reinterpret_cast<uint32_t&>(scale) = (reinterpret_cast<uint32_t&>(scale) /*+ 0x7f000000*/) & 0x7f800000;
-
-                x_e8m0_ptr[0] = reinterpret_cast<uint32_t&>(scale) >> 23;
+                x_e8m0_ptr[0] = f32_to_e8m0(scale);
 
                 #pragma unroll
                 for(int w=0; w<4; w++) {
@@ -770,9 +771,7 @@ private:
                     scale = std::sqrt(var) * (2.92247856 / 6.) + 1e-8;
                 }
 
-                reinterpret_cast<uint32_t&>(scale) = (reinterpret_cast<uint32_t&>(scale) /*+ 0x7f000000*/) & 0x7f800000;
-
-                x_e8m0_ptr[0] = reinterpret_cast<uint32_t&>(scale) >> 23;
+                x_e8m0_ptr[0] = f32_to_e8m0(scale);
 
                 #pragma unroll
                 for(int w=0; w<4; w++) {
@@ -792,9 +791,7 @@ private:
                 }
 
                 float scale = abs_max + 1e-8f;
-                reinterpret_cast<uint32_t&>(scale) = (reinterpret_cast<uint32_t&>(scale) /*+ 0x7f000000*/) & 0x7f800000;
-
-                x_e8m0_ptr[0] = reinterpret_cast<uint32_t&>(scale) >> 23;
+                x_e8m0_ptr[0] = f32_to_e8m0(scale);
 
                 #pragma unroll
                 for(int w=0; w<4; w++) {
@@ -1163,9 +1160,7 @@ class EpilogueQuantMxMask
                 scale = std::sqrt(var) * (2.92247856 / 6.) + 1e-8;
             }
 
-            reinterpret_cast<uint32_t&>(scale) = (reinterpret_cast<uint32_t&>(scale) /*+ 0x7f000000*/) & 0x7f800000;
-
-            x_e8m0_ptr[0] = reinterpret_cast<uint32_t&>(scale) >> 23;
+            x_e8m0_ptr[0] = f32_to_e8m0(scale);
 
            #pragma unroll
             for(int w=0; w<4; w++) {

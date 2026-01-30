@@ -200,7 +200,7 @@ void matmul_host_mxf4_bf16_tn(torch::Tensor& D,
     using LayoutBTag = cutlass::layout::ColumnMajor;
     static constexpr int AlignmentB = 128;
 
-#if TARGET_CUDA_ARCH == 100 //TODO: improve tuning
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103 //TODO: improve tuning
     using ArchTag = cutlass::arch::Sm100;
     if(m<=16){
         using MmaTileShape       = Shape<_128,_128,_256>;
@@ -276,7 +276,7 @@ void matmul_host_nvf4_bf16_tn(torch::Tensor& D,
     using LayoutBTag = cutlass::layout::ColumnMajor;
     static constexpr int AlignmentB = 32;
 
-#if TARGET_CUDA_ARCH == 100 //TODO: improve tuning
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103 //TODO: improve tuning
     using ArchTag = cutlass::arch::Sm100;
     if(m<=16){
         using MmaTileShape       = Shape<_128,_128,_256>;
@@ -354,7 +354,7 @@ void matmul_host_mxf8_bf16_tn(torch::Tensor& D,
     using LayoutBTag = cutlass::layout::ColumnMajor;
     static constexpr int AlignmentB = 16;
 
-#if TARGET_CUDA_ARCH == 100
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103
     using ArchTag = cutlass::arch::Sm100;
 
     if(m<=8192){
@@ -414,7 +414,7 @@ void matmul_host_mxf8_bf16_nn(torch::Tensor& D,
     using LayoutBTag = cutlass::layout::ColumnMajor;
     static constexpr int AlignmentB = 16;
 
-#if TARGET_CUDA_ARCH == 100
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103
     using ArchTag = cutlass::arch::Sm100;
 
     if(m<=8192){
@@ -439,6 +439,6 @@ void matmul_host_mxf8_bf16_nn(torch::Tensor& D,
                     >(D, A, B, A_sf, B_sf, alpha, m, n, k, A.device());
     }
 #else
-    TORCH_CHECK(false, "Unsupported CUDA arch");
+    TORCH_CHECK(false, "Unsupported CUDA arch (sm_120 does not support NN layout for mxf8)");
 #endif
 }

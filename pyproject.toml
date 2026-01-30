@@ -4,9 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qutlass"
-version = "0.2.0"
+version = "0.4.0"
 description = "qutlass"
-authors = [{name = "Roberto L. Castro", email = "Roberto.LopezCastro@ist.ac.at"}]
+authors = [{name = "Roberto L. Castro", email = "Roberto.LopezCastro@ist.ac.at"},
+           {name = "Moiz A. Yousufi", email = "moiz.yousufi@gatech.edu"}]
 license = {text = "Apache-2.0"}
 dependencies = []
 

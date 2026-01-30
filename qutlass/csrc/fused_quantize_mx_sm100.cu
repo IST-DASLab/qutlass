@@ -205,7 +205,7 @@ void fusedQuantizeMxAbsMax_host_sm100(torch::Tensor& D,
                                       torch::Tensor const& B,
                                       torch::Tensor const& global_scale)
 {
-#if TARGET_CUDA_ARCH == 100
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103
     int32_t M = A.numel() / 128;
     int32_t N = B.size(1);
     int32_t K = 128;
@@ -216,4 +216,90 @@ void fusedQuantizeMxAbsMax_host_sm100(torch::Tensor& D,
 #endif
 }
 
+// ============================================================================
+// v2 API: Arbitrary K support for SM100 (B200/B300)
+// ============================================================================
+
+void fusedQuantizeMxQuest_host_sm100_v2(torch::Tensor& D,
+                                         torch::Tensor& D_sf,
+                                         torch::Tensor const& A,
+                                         torch::Tensor const& H,
+                                         torch::Tensor const& global_scale)
+{
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 103
+    // Extract dimensions from inputs
+    int32_t M = A.size(0);
+    int32_t K = A.size(1);  // Arbitrary K!
+    int32_t N = H.size(1);  // H is K x K for Hadamard rotation
+
+    // Validate inputs
+    TORCH_CHECK(K >= 32, "K must be at least 32");
+    TORCH_CHECK(K % 32 == 0, "K must be divisible by 32 for SM100/SM103 kernel");
+    TORCH_CHECK(H.size(0) == K && H.size(1) == K, "H must be K x K");
+
+    // Run BF16 GEMM with fused MXFP4 quantization
+    runGemm(D, D_sf, A, H, global_scale, M, N, K, A.device());
+#else
+    TORCH_CHECK(false, "SM100/SM103 kernel requires TARGET_CUDA_ARCH=100 or 103");
+#endif
+}
+
+void fusedQuantizeMxAbsMax_host_sm100_v2(torch::Tensor& D,
+                                          torch::Tensor& D_sf,
+                                          torch::Tensor const& A,
+                                          torch::Tensor const& H,
+                                          torch::Tensor const& global_scale)
+{
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 103
+    // Same as Quest version - the kernel handles both methods
+    fusedQuantizeMxQuest_host_sm100_v2(D, D_sf, A, H, global_scale);
+#else
+    TORCH_CHECK(false, "SM100/SM103 kernel requires TARGET_CUDA_ARCH=100 or 103");
+#endif
+}
+
 } // namespace QUTLASS
+
+// ============================================================================
+// QUTLASS_V2 namespace - Dispatch wrapper for v2 API
+// ============================================================================
+
+namespace QUTLASS_V2 {
+
+void fusedQuantizeMxQuest_v2(torch::Tensor& D,
+                             torch::Tensor& D_sf,
+                             torch::Tensor const& A,
+                             torch::Tensor const& H)
+{
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 103
+    // SM100/SM103 (B200/B300): Use native SM100 kernel with arbitrary K
+    auto opts = torch::TensorOptions().dtype(torch::kFloat).device(A.device());
+    auto global_scale = torch::tensor(0.0f, opts);
+    QUTLASS::fusedQuantizeMxQuest_host_sm100_v2(D, D_sf, A, H, global_scale);
+#else
+    TORCH_CHECK(false,
+        "v2 API on this architecture is not yet implemented. "
+        "SM100 (B200/B300) uses native kernel. "
+        "SM120+ would need CUTLASS 2.x SM80 backend with backward compatibility.");
+#endif
+}
+
+void fusedQuantizeMxAbsMax_v2(torch::Tensor& D,
+                              torch::Tensor& D_sf,
+                              torch::Tensor const& A,
+                              torch::Tensor const& H)
+{
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 103
+    // SM100/SM103 (B200/B300): Use native SM100 kernel with arbitrary K
+    auto opts = torch::TensorOptions().dtype(torch::kFloat).device(A.device());
+    auto global_scale = torch::tensor(0.0f, opts);
+    QUTLASS::fusedQuantizeMxAbsMax_host_sm100_v2(D, D_sf, A, H, global_scale);
+#else
+    TORCH_CHECK(false,
+        "v2 API on this architecture is not yet implemented. "
+        "SM100 (B200/B300) uses native kernel. "
+        "SM120+ would need CUTLASS 2.x SM80 backend with backward compatibility.");
+#endif
+}
+
+} // namespace QUTLASS_V2

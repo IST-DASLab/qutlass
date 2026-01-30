@@ -55,6 +55,16 @@ void fusedQuantizeMxAbsMaxHad128_host(torch::Tensor&       D,
                                       torch::Tensor const& A,
                                       torch::Tensor const& B);
 
+void fusedQuantizeMxQuestHad256_host(torch::Tensor&       D,
+                                     torch::Tensor&       D_sf,
+                                     torch::Tensor const& A,
+                                     torch::Tensor const& B);
+
+void fusedQuantizeMxAbsMaxHad256_host(torch::Tensor&       D,
+                                      torch::Tensor&       D_sf,
+                                      torch::Tensor const& A,
+                                      torch::Tensor const& B);
+
 void fusedQuantizeNvQuest_host(torch::Tensor&       D,
                                torch::Tensor&       D_sf,
                                torch::Tensor const& A,
@@ -114,5 +124,18 @@ void fusedQuantizeNvAbsMax_host_sm100(torch::Tensor&       D,
                                       torch::Tensor const& A,
                                       torch::Tensor const& B,
                                       torch::Tensor const& global_scale);
+
+// v2 API: Arbitrary K support for SM100 (B200/B300)
+void fusedQuantizeMxQuest_host_sm100_v2(torch::Tensor&       D,
+                                         torch::Tensor&       D_sf,
+                                         torch::Tensor const& A,
+                                         torch::Tensor const& H,
+                                         torch::Tensor const& global_scale);
+
+void fusedQuantizeMxAbsMax_host_sm100_v2(torch::Tensor&       D,
+                                          torch::Tensor&       D_sf,
+                                          torch::Tensor const& A,
+                                          torch::Tensor const& H,
+                                          torch::Tensor const& global_scale);
 
 }  // namespace QUTLASS

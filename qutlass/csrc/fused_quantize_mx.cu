@@ -216,4 +216,38 @@ void fusedQuantizeMxAbsMaxHad128_host(torch::Tensor& D,
   bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device());
 }
 
+void fusedQuantizeMxQuestHad256_host(torch::Tensor& D,
+                               torch::Tensor& D_sf,
+                               torch::Tensor const& A,
+                               torch::Tensor const& B)
+{
+  int32_t M = A.numel() / 256;
+  int32_t N = B.size(1);
+  int32_t K = 256;
+
+  using TileShape = typename cutlass::gemm::GemmShape<128, 256, 32>;
+  using WarpShape = typename cutlass::gemm::GemmShape<32, 256, 32>;
+  using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
+
+  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 256>> runGemm;
+  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device());
+}
+
+void fusedQuantizeMxAbsMaxHad256_host(torch::Tensor& D,
+                                torch::Tensor& D_sf,
+                                torch::Tensor const& A,
+                                torch::Tensor const& B)
+{
+  int32_t M = A.numel() / 256;
+  int32_t N = B.size(1);
+  int32_t K = 256;
+
+  using TileShape = typename cutlass::gemm::GemmShape<128, 256, 32>;
+  using WarpShape = typename cutlass::gemm::GemmShape<32, 256, 32>;
+  using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
+
+  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 256>> runGemm;
+  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device());
+}
+
 } // namespace QUTLASS

@@ -1,0 +1,71 @@
+name: qutlass
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python version - use 3.10 for compatibility with qutlass tests
+  - python=3.10
+
+  # Build tools (required for CUDA compilation)
+  - cmake>=3.26
+  - ninja
+
+  # CUDA toolkit and cuDNN (for Blackwell sm_120 support)
+  # Note: Use system CUDA 12.8+ if available, otherwise conda will install
+  - cudnn=9.15.1.9  # Required for FlashInfer MXFP4 hardware acceleration
+
+  # Core dependencies
+  - numpy>=1.21.0
+  - scipy  # Required for Hadamard matrices in tests
+  - matplotlib
+  - pandas
+
+  # Python package manager
+  - pip
+
+  # Pip-installable dependencies
+  - pip:
+      # PyTorch 2.8+ with CUDA 12.8 support (for Blackwell sm_120)
+      - torch>=2.8.0
+      - triton>=2.1.0
+
+      # Testing framework
+      - pytest>=7.0.0
+      - pytest-xdist  # Parallel test execution
+
+      # FlashInfer for 4x speedup on Blackwell (optional)
+      # Install from local fork if you've fixed bugs, otherwise:
+      # - --extra-index-url https://flashinfer.ai/whl/cu124/torch2.9/
+      # - flashinfer-python>=0.5.3
+
+      # Development tools
+      - black
+      - isort
+      - flake8
+
+      # Utilities
+      - tqdm
+      - tabulate
+
+# Installation instructions:
+# 1. Create environment:
+#    conda env create -f environment.yml
+#
+# 2. Activate:
+#    conda activate qutlass
+#
+# 3. Install qutlass:
+#    pip install --no-build-isolation -e .
+#
+# 4. Install FlashInfer (if you have local fork with fixes):
+#    cd ../flashinfer && pip install -e .
+#
+# 5. Run tests:
+#    pytest tests/mxfp4_test.py -v
+#
+# Notes:
+# - Python 3.10 is required (tests fail on 3.14 due to dataclasses changes)
+# - CUDA 12.8+ required for Blackwell sm_120 support

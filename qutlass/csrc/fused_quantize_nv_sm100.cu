@@ -205,7 +205,7 @@ void fusedQuantizeNvAbsMax_host_sm100(torch::Tensor& D,
                                       torch::Tensor const& B,
                                       torch::Tensor const& global_scale)
 {
-#if TARGET_CUDA_ARCH == 100
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 103
     int32_t M = A.numel() / 128;
     int32_t N = B.size(1);
     int32_t K = 128;

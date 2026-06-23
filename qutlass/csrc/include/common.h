@@ -1,6 +1,5 @@
 #pragma once
 
-#pragma once
 #include <iostream>
 #include <stdexcept>
 #include <cstdint>
@@ -8,30 +7,42 @@
 
 #include <cuda_fp16.h>
 #include <cuda_runtime.h>
-
-#include <cstdint>
 #include <cuda.h>
+
+#include <torch/csrc/stable/tensor.h>
+#include <torch/csrc/stable/ops.h>
+#include <torch/csrc/stable/accelerator.h>
+#include <torch/csrc/inductor/aoti_torch/c/shim.h>
+#include <torch/headeronly/util/Exception.h>
+#include <torch/headeronly/util/shim_utils.h>
 
 #include "cutlass/cutlass.h"
 
 /**
  * Helper function for checking CUTLASS errors
  */
-#define CUTLASS_CHECK(status)                       \
-  {                                                 \
-    cutlass::Status error = status;                 \
-    TORCH_CHECK(error == cutlass::Status::kSuccess, \
-                cutlassGetStatusString(error));     \
+#define CUTLASS_CHECK(status)                              \
+  {                                                        \
+    cutlass::Status error = status;                        \
+    STD_TORCH_CHECK(error == cutlass::Status::kSuccess,    \
+                    cutlassGetStatusString(error));        \
   }
 
 /**
  * Panic wrapper for unwinding CUDA runtime errors
  */
-#define CUDA_CHECK(status)                                        \
-  {                                                               \
-    cudaError_t error = status;                                   \
-    TORCH_CHECK(error == cudaSuccess, cudaGetErrorString(error)); \
+  #define CUDA_CHECK(status)                                          \
+  {                                                                   \
+    cudaError_t error = status;                                       \
+    STD_TORCH_CHECK(error == cudaSuccess, cudaGetErrorString(error)); \
   }
+
+inline cudaStream_t get_current_cuda_stream(int32_t device_index) {
+  void* stream_ptr = nullptr;
+  TORCH_ERROR_CODE_CHECK(
+      aoti_torch_get_current_cuda_stream(device_index, &stream_ptr));
+  return reinterpret_cast<cudaStream_t>(stream_ptr);
+}
 
 inline int get_cuda_max_shared_memory_per_block_opt_in(int const device) {
   int max_shared_mem_per_block_opt_in = 0;

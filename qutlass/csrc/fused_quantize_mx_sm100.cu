@@ -14,16 +14,6 @@
  * limitations under the License.
  */
 
-#include <ATen/ATen.h>
-#include <torch/types.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAGuard.h>
-#include <cuda_runtime.h>
-
-#ifndef QUTLASS_DISABLE_PYBIND
-#include <torch/extension.h>
-#endif
-
 #include "cutlass/cutlass.h"
 #include "cute/tensor.hpp"
 #include "cutlass/tensor_ref.h"
@@ -128,11 +118,11 @@ constexpr bool IsBlockScaleSupported = FusionOp::IsBlockScaleSupported;
 using SfdOutputCfg = cutlass::detail::Sm1xxBlockScaledOutputConfig<OutputSFVectorSize>;
 using LayoutSFD = typename SfdOutputCfg::LayoutSF;
 
-typename Gemm::Arguments args_from_options(torch::Tensor& D,
-                                           torch::Tensor& D_sf,
-                                           torch::Tensor const& A,
-                                           torch::Tensor const& B,
-                                           torch::Tensor const& global_scale,
+typename Gemm::Arguments args_from_options(torch::stable::Tensor& D,
+                                           torch::stable::Tensor& D_sf,
+                                           torch::stable::Tensor const& A,
+                                           torch::stable::Tensor const& B,
+                                           torch::stable::Tensor const& global_scale,
                                            int32_t M, int32_t N, int32_t K)
 {
     using ElementA       = typename Gemm::ElementA;
@@ -155,30 +145,30 @@ typename Gemm::Arguments args_from_options(torch::Tensor& D,
         cutlass::gemm::GemmUniversalMode::kGemm,
         {M, N, K, 1},
         {
-            static_cast<ElementA const*>(A.data_ptr()),      stride_A,
-            static_cast<ElementB const*>(B.data_ptr()),      stride_B},
+            static_cast<ElementA const*>(A.const_data_ptr()),      stride_A,
+            static_cast<ElementB const*>(B.const_data_ptr()),      stride_B},
         {
             {1.f, 0.f},
             nullptr, stride_C,
-            static_cast<ElementD*>(D.data_ptr()),       stride_D
+            static_cast<ElementD*>(D.mutable_data_ptr()),       stride_D
         }
     };
 
     if constexpr (IsBlockScaleSupported) {
-        arguments.epilogue.thread.block_scale_factor_ptr = static_cast<cutlass::float_ue8m0_t*>(D_sf.data_ptr());
-        arguments.epilogue.thread.norm_constant_ptr      = static_cast<ElementAccumulator const*>(global_scale.data_ptr());;
+        arguments.epilogue.thread.block_scale_factor_ptr = static_cast<cutlass::float_ue8m0_t*>(D_sf.mutable_data_ptr());
+        arguments.epilogue.thread.norm_constant_ptr      = static_cast<ElementAccumulator const*>(global_scale.const_data_ptr());
     }
 
     return arguments;
 }
 
-void runGemm(torch::Tensor& D,
-             torch::Tensor& D_sf,
-             torch::Tensor const& A,
-             torch::Tensor const& B,
-             torch::Tensor const& global_scale,
+void runGemm(torch::stable::Tensor& D,
+             torch::stable::Tensor& D_sf,
+             torch::stable::Tensor const& A,
+             torch::stable::Tensor const& B,
+             torch::stable::Tensor const& global_scale,
              int32_t M, int32_t N, int32_t K,
-             torch::Device device)
+             torch::stable::Device device)
 {
     Gemm gemm;
 
@@ -189,8 +179,8 @@ void runGemm(torch::Tensor& D,
 
     cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
 
-    const at::cuda::OptionalCUDAGuard device_guard(device_of(A));
-    cudaStream_t stream = at::cuda::getCurrentCUDAStream(device.index());
+    const torch::stable::accelerator::DeviceGuard device_guard(A.get_device_index());
+    cudaStream_t stream = get_current_cuda_stream(device.index());
 
     CUTLASS_CHECK(gemm.can_implement(arguments));
 
@@ -199,11 +189,11 @@ void runGemm(torch::Tensor& D,
     CUTLASS_CHECK(gemm.run(arguments, workspace.get(), stream));
 }
 
-void fusedQuantizeMxAbsMax_host_sm100(torch::Tensor& D,
-                                      torch::Tensor& D_sf,
-                                      torch::Tensor const& A,
-                                      torch::Tensor const& B,
-                                      torch::Tensor const& global_scale)
+void fusedQuantizeMxAbsMax_host_sm100(torch::stable::Tensor& D,
+                                      torch::stable::Tensor& D_sf,
+                                      torch::stable::Tensor const& A,
+                                      torch::stable::Tensor const& B,
+                                      torch::stable::Tensor const& global_scale)
 {
 #if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110
     int32_t M = A.numel() / 128;
@@ -212,7 +202,7 @@ void fusedQuantizeMxAbsMax_host_sm100(torch::Tensor& D,
 
     runGemm(D, D_sf, A, B, global_scale, M, N, K, A.device());
 #else
-    TORCH_CHECK(false, "Unsupported CUDA arch");
+    STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
 }
 

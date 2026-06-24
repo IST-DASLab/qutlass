@@ -10,6 +10,9 @@
 
 namespace {
 
+// methods in here are meant to mirror some of the methods 
+// in PyTorch's aten/src/ATen/TensorUtils.cpp file
+
 using torch::stable::Tensor;
 using torch::headeronly::DeviceType;
 
@@ -21,6 +24,8 @@ struct TensorArg {
 
 inline std::ostream& operator<<(std::ostream& out, const TensorArg& t) {
   if (t.pos == 0) {
+    // 0 is distinguished; it usually indicates 'self' or the return
+    // tensor
     out << '\'' << t.name << '\'';
   } else {
     out << "argument #" << t.pos << " '" << t.name << '\'';
@@ -51,32 +56,24 @@ inline const char* device_type_name(DeviceType type) {
   }
 }
 
-inline void append_device_type_string(std::ostream& out, DeviceType type) {
-  out << device_type_name(type);
-}
-
 inline void append_device_string(std::ostream& out, const Tensor& t) {
   const auto device = t.device();
-  append_device_type_string(out, device.type());
+  out << device_type_name(device.type());
   if (device.has_index()) {
     out << ':' << device.index();
   }
 }
 
-inline void check_contiguous(const char* op, const TensorArg& t) {
-  if (t.tensor.is_contiguous()) {
-    return;
-  }
-  std::ostringstream oss;
-  oss << "Expected contiguous tensor, but got non-contiguous tensor for " << t
-      << " (while checking arguments for " << op << ")";
-  STD_TORCH_CHECK(false, oss.str());
-}
-
 inline void check_all_contiguous(const char* op,
                                  std::initializer_list<TensorArg> args) {
   for (const auto& arg : args) {
-    check_contiguous(op, arg);
+    if (arg.tensor.is_contiguous()) {
+      continue;
+    }
+    std::ostringstream oss;
+    oss << "Expected contiguous tensor, but got non-contiguous tensor for " << arg
+        << " (while checking arguments for " << op << ")";
+    STD_TORCH_CHECK(false, oss.str());
   }
 }
 
@@ -97,22 +94,22 @@ inline void check_device_type_cuda(const char* op,
 inline void check_same_gpu(const char* op,
                            const TensorArg& t1,
                            const TensorArg& t2) {
-  const bool t1_cuda = t1.tensor.device().is_cuda();
-  const bool t2_cuda = t2.tensor.device().is_cuda();
-  if (!t1_cuda || !t2_cuda) {
+  const bool t1_cpu = t1.tensor.device().is_cpu();
+  const bool t2_cpu = t2.tensor.device().is_cpu();
+  if (t1_cpu || t2_cpu) {
     std::ostringstream oss;
-    if (!t1_cuda) {
+    if (t1_cpu) {
       oss << "Tensor for " << t1 << " is on CPU, ";
     }
-    if (!t2_cuda) {
+    if (t2_cpu) {
       oss << "Tensor for " << t2 << " is on CPU, ";
     }
-    oss << "but expected " << ((t1_cuda && t2_cuda) ? "them" : "it")
+    oss << "but expected " << ((t1_cpu && t2_cpu) ? "them" : "it")
         << " to be on GPU (while checking arguments for " << op << ')';
     STD_TORCH_CHECK(false, oss.str());
   }
-  const int d1 = t1.tensor.get_device_index();
-  const int d2 = t2.tensor.get_device_index();
+  const auto d1 = t1.tensor.device();
+  const auto d2 = t2.tensor.device();
   if (d1 == d2) {
     return;
   }

@@ -31,7 +31,7 @@
 /**
  * Panic wrapper for unwinding CUDA runtime errors
  */
-  #define CUDA_CHECK(status)                                          \
+#define CUDA_CHECK(status)                                            \
   {                                                                   \
     cudaError_t error = status;                                       \
     STD_TORCH_CHECK(error == cudaSuccess, cudaGetErrorString(error)); \

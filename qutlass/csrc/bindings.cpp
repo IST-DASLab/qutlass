@@ -22,6 +22,7 @@
 #include "include/bindings_utils.h"
 #include "include/gemm.h"
 #include "include/fused_quantize_host.h"
+#include "include/backward_host.h"
 
 namespace QUTLASS {
 
@@ -134,6 +135,84 @@ Tensor matmul_ada_mxf4_bf16_tn(Tensor const& A,
     matmul_host_ada_mxf4_bf16_tn(A, B, A_sf, B_sf, C, alpha);
 
     return C;
+}
+
+Tensor matmul_mxf8_bf16_tn(Tensor const& A,
+                          Tensor const& B,
+                          Tensor const& A_sf,
+                          Tensor const& B_sf,
+                          Tensor const& alpha)
+{
+    check_all_contiguous("matmul_mxf8_bf16_tn", {{A, "A", 0},
+                                                 {B, "B", 1},
+                                                 {A_sf, "A_sf", 2},
+                                                 {B_sf, "B_sf", 3},
+                                                 {alpha, "alpha", 4}});
+    check_device_type_cuda("matmul_mxf8_bf16_tn", {A, B, A_sf, B_sf, alpha});
+    check_all_same_gpu("matmul_mxf8_bf16_tn", {{A, "A", 0},
+                                              {B, "B", 1},
+                                              {A_sf, "A_sf", 2},
+                                              {B_sf, "B_sf", 3},
+                                              {alpha, "alpha", 4}});
+    STD_TORCH_CHECK(A.scalar_type() == ScalarType::Float8_e4m3fn,
+                    "A must be float8_e4m3fn");
+    STD_TORCH_CHECK(B.scalar_type() == ScalarType::Float8_e4m3fn,
+                    "B must be float8_e4m3fn");
+    STD_TORCH_CHECK(A_sf.scalar_type() == ScalarType::Float8_e8m0fnu,
+                    "A_sf must be float8_e8m0fnu");
+    STD_TORCH_CHECK(B_sf.scalar_type() == ScalarType::Float8_e8m0fnu,
+                    "B_sf must be float8_e8m0fnu");
+    STD_TORCH_CHECK(A.dim() == 2 && B.dim() == 2, "A and B must be 2D");
+    STD_TORCH_CHECK(A.size(1) == B.size(1), "Inner dimensions must match for A @ B.T");
+    STD_TORCH_CHECK(A.size(1) >= 32, "A K-dim must be >= 32");
+    STD_TORCH_CHECK(B.size(1) >= 32, "B K-dim must be >= 32");
+
+    uint32_t M = A.size(0);
+    uint32_t N = B.size(0);
+    auto OUT = torch::stable::new_empty(A, {M, N}, ScalarType::BFloat16);
+
+    matmul_host_mxf8_bf16_tn(OUT, A, B, A_sf, B_sf, alpha);
+
+    return OUT;
+}
+
+Tensor matmul_mxf8_bf16_nn(Tensor const& A,
+                          Tensor const& B,
+                          Tensor const& A_sf,
+                          Tensor const& B_sf,
+                          Tensor const& alpha)
+{
+    check_all_contiguous("matmul_mxf8_bf16_nn", {{A, "A", 0},
+                                                 {B, "B", 1},
+                                                 {A_sf, "A_sf", 2},
+                                                 {B_sf, "B_sf", 3},
+                                                 {alpha, "alpha", 4}});
+    check_device_type_cuda("matmul_mxf8_bf16_nn", {A, B, A_sf, B_sf, alpha});
+    check_all_same_gpu("matmul_mxf8_bf16_nn", {{A, "A", 0},
+                                              {B, "B", 1},
+                                              {A_sf, "A_sf", 2},
+                                              {B_sf, "B_sf", 3},
+                                              {alpha, "alpha", 4}});
+    STD_TORCH_CHECK(A.scalar_type() == ScalarType::Float8_e4m3fn,
+                    "A must be float8_e4m3fn");
+    STD_TORCH_CHECK(B.scalar_type() == ScalarType::Float8_e4m3fn,
+                    "B must be float8_e4m3fn");
+    STD_TORCH_CHECK(A_sf.scalar_type() == ScalarType::Float8_e8m0fnu,
+                    "A_sf must be float8_e8m0fnu");
+    STD_TORCH_CHECK(B_sf.scalar_type() == ScalarType::Float8_e8m0fnu,
+                    "B_sf must be float8_e8m0fnu");
+    STD_TORCH_CHECK(A.dim() == 2 && B.dim() == 2, "A and B must be 2D");
+    STD_TORCH_CHECK(A.size(0) == B.size(1), "Inner dimensions must match for A.T @ B.T");
+    STD_TORCH_CHECK(A.size(0) >= 32, "A K-dim must be >= 32");
+    STD_TORCH_CHECK(B.size(1) >= 32, "B K-dim must be >= 32");
+
+    uint32_t M = A.size(1);
+    uint32_t N = B.size(0);
+    auto OUT = torch::stable::new_empty(A, {M, N}, ScalarType::BFloat16);
+
+    matmul_host_mxf8_bf16_nn(OUT, A, B, A_sf, B_sf, alpha);
+
+    return OUT;
 }
 
 std::tuple<Tensor, Tensor> fusedQuantizeMxQuest(Tensor const& A,
@@ -344,26 +423,109 @@ std::tuple<Tensor, Tensor> fusedQuantizeNvAbsMax(Tensor const& A,
     return std::make_tuple(OUT, OUT_sf);
 }
 
+void backward_t_bf16(Tensor const& x,
+                     Tensor const& h,
+                     Tensor& xh_e2m1,
+                     Tensor& xh_e8m0)
+{
+    backward_t_bf16_cuda(
+        x.const_data_ptr(),
+        h.const_data_ptr(),
+        xh_e2m1.mutable_data_ptr(),
+        xh_e8m0.mutable_data_ptr(),
+        x.size(-1),
+        x.size(-2),
+        x.numel() / (x.size(-2) * x.size(-1)),
+        get_current_cuda_stream(h.get_device_index()));
+}
+
+void backward_qt_bf16(Tensor const& x_e2m1,
+                      Tensor const& x_e8m0,
+                      Tensor const& h,
+                      Tensor const& alpha,
+                      Tensor& xh_e2m1,
+                      Tensor& xh_e8m0)
+{
+    backward_qt_bf16_cuda(
+        x_e2m1.const_data_ptr(),
+        x_e8m0.const_data_ptr(),
+        h.const_data_ptr(),
+        alpha.const_data_ptr(),
+        xh_e2m1.mutable_data_ptr(),
+        xh_e8m0.mutable_data_ptr(),
+        x_e2m1.size(-1) * 2,
+        x_e2m1.size(-2),
+        x_e2m1.numel() / (x_e2m1.size(-2) * x_e2m1.size(-1)),
+        get_current_cuda_stream(h.get_device_index()));
+}
+
+void backward_bf16_square_double_mxfp8(Tensor const& x_bf16,
+                                       Tensor& x_fp8,
+                                       Tensor& row_scales,
+                                       Tensor& column_scales)
+{
+    backward_bf16_square_double_mxfp8_cuda(
+        x_bf16.const_data_ptr(),
+        x_bf16.size(0),
+        x_bf16.size(1),
+        x_fp8.mutable_data_ptr(),
+        row_scales.mutable_data_ptr(),
+        column_scales.mutable_data_ptr(),
+        get_current_cuda_stream(x_bf16.get_device_index()));
+}
+
+void mxfp4_transpose_mxfp8(Tensor const& x_fp4,
+                           Tensor const& scales,
+                           Tensor& x_fp8,
+                           Tensor& shared_exps)
+{
+    mxfp4_transpose_mxfp8_cuda(
+        x_fp4.const_data_ptr(),
+        scales.const_data_ptr(),
+        x_fp4.size(0),
+        x_fp4.size(1) * 2,
+        x_fp8.mutable_data_ptr(),
+        shared_exps.mutable_data_ptr(),
+        get_current_cuda_stream(x_fp4.get_device_index()));
+}
+
 }  // namespace QUTLASS
 
 STABLE_TORCH_LIBRARY_FRAGMENT(_qutlass_C, ops) {
   ops.def("matmul_mxf4_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
   ops.def("matmul_nvf4_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
   ops.def("matmul_ada_mxf4_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
+  ops.def("matmul_mxf8_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
+  ops.def("matmul_mxf8_bf16_nn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
   ops.def("fusedQuantizeMxQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf) -> (Tensor, Tensor)");
-  ops.def("fusedQuantizeMxQuestWithMask(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor OUT_mask) -> (Tensor, Tensor, Tensor)");
   ops.def("fusedQuantizeMxAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf) -> (Tensor, Tensor)");
   ops.def("fusedQuantizeNvQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
   ops.def("fusedQuantizeNvAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
+#ifndef QUTLASS_MINIMAL_BUILD
+  ops.def("fusedQuantizeMxQuestWithMask(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor OUT_mask) -> (Tensor, Tensor, Tensor)");
+  ops.def("backward_t_bf16(Tensor x, Tensor h, Tensor xh_e2m1, Tensor xh_e8m0) -> ()");
+  ops.def("backward_qt_bf16(Tensor x_e2m1, Tensor x_e8m0, Tensor h, Tensor alpha, Tensor xh_e2m1, Tensor xh_e8m0) -> ()");
+  ops.def("backward_bf16_square_double_mxfp8(Tensor x_bf16, Tensor x_fp8, Tensor row_scales, Tensor column_scales) -> ()");
+  ops.def("mxfp4_transpose_mxfp8(Tensor x_fp4, Tensor scales, Tensor x_fp8, Tensor shared_exps) -> ()");
+#endif
 }
 
 STABLE_TORCH_LIBRARY_IMPL(_qutlass_C, CUDA, ops) {
   ops.impl("matmul_mxf4_bf16_tn", TORCH_BOX(&QUTLASS::matmul_mxf4_bf16_tn));
   ops.impl("matmul_nvf4_bf16_tn", TORCH_BOX(&QUTLASS::matmul_nvf4_bf16_tn));
   ops.impl("matmul_ada_mxf4_bf16_tn", TORCH_BOX(&QUTLASS::matmul_ada_mxf4_bf16_tn));
+  ops.impl("matmul_mxf8_bf16_tn", TORCH_BOX(&QUTLASS::matmul_mxf8_bf16_tn));
+  ops.impl("matmul_mxf8_bf16_nn", TORCH_BOX(&QUTLASS::matmul_mxf8_bf16_nn));
   ops.impl("fusedQuantizeMxQuest", TORCH_BOX(&QUTLASS::fusedQuantizeMxQuest));
-  ops.impl("fusedQuantizeMxQuestWithMask", TORCH_BOX(&QUTLASS::fusedQuantizeMxQuestWithMask));
   ops.impl("fusedQuantizeMxAbsMax", TORCH_BOX(&QUTLASS::fusedQuantizeMxAbsMax));
   ops.impl("fusedQuantizeNvQuest", TORCH_BOX(&QUTLASS::fusedQuantizeNvQuest));
   ops.impl("fusedQuantizeNvAbsMax", TORCH_BOX(&QUTLASS::fusedQuantizeNvAbsMax));
+#ifndef QUTLASS_MINIMAL_BUILD
+  ops.impl("fusedQuantizeMxQuestWithMask", TORCH_BOX(&QUTLASS::fusedQuantizeMxQuestWithMask));
+  ops.impl("backward_t_bf16", TORCH_BOX(&QUTLASS::backward_t_bf16));
+  ops.impl("backward_qt_bf16", TORCH_BOX(&QUTLASS::backward_qt_bf16));
+  ops.impl("backward_bf16_square_double_mxfp8",
+           TORCH_BOX(&QUTLASS::backward_bf16_square_double_mxfp8));
+  ops.impl("mxfp4_transpose_mxfp8", TORCH_BOX(&QUTLASS::mxfp4_transpose_mxfp8));
+#endif
 }

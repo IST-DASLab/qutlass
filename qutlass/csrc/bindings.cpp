@@ -425,19 +425,6 @@ std::tuple<Tensor, Tensor> fusedQuantizeNvAbsMax(Tensor const& A,
     return std::make_tuple(OUT, OUT_sf);
 }
 
-// Legacy vLLM entry point (pre-Quest/AbsMax split). Same dispatch as
-// fusedQuantizeNvAbsMax: Quest=false kernels for 16/32/64, SM100 special
-// path at 128, Had128 on SM120.
-// Adding this to run unit test on vllm, 
-// will need to figure out how to resolve this before merging.
-std::tuple<Tensor, Tensor> fusedQuantizeNv(Tensor const& A,
-                                           Tensor const& B,
-                                           Tensor& OUT,
-                                           Tensor& OUT_sf,
-                                           Tensor const& global_scale) {
-  return fusedQuantizeNvAbsMax(A, B, OUT, OUT_sf, global_scale);
-}
-
 #ifndef QUTLASS_MINIMAL_BUILD
 void backward_t_bf16(Tensor const& x,
                      Tensor const& h,
@@ -518,7 +505,6 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_qutlass_C, ops) {
   ops.def("fusedQuantizeMxAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf) -> (Tensor, Tensor)");
   ops.def("fusedQuantizeNvQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
   ops.def("fusedQuantizeNvAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
-  ops.def("fusedQuantizeNv(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
 #ifndef QUTLASS_MINIMAL_BUILD
   ops.def("fusedQuantizeMxQuestWithMask(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor OUT_mask) -> (Tensor, Tensor, Tensor)");
   ops.def("backward_t_bf16(Tensor x, Tensor h, Tensor xh_e2m1, Tensor xh_e8m0) -> ()");
@@ -538,7 +524,6 @@ STABLE_TORCH_LIBRARY_IMPL(_qutlass_C, CUDA, ops) {
   ops.impl("fusedQuantizeMxAbsMax", TORCH_BOX(&QUTLASS::fusedQuantizeMxAbsMax));
   ops.impl("fusedQuantizeNvQuest", TORCH_BOX(&QUTLASS::fusedQuantizeNvQuest));
   ops.impl("fusedQuantizeNvAbsMax", TORCH_BOX(&QUTLASS::fusedQuantizeNvAbsMax));
-  ops.impl("fusedQuantizeNv", TORCH_BOX(&QUTLASS::fusedQuantizeNv));
 #ifndef QUTLASS_MINIMAL_BUILD
   ops.impl("fusedQuantizeMxQuestWithMask", TORCH_BOX(&QUTLASS::fusedQuantizeMxQuestWithMask));
   ops.impl("backward_t_bf16", TORCH_BOX(&QUTLASS::backward_t_bf16));

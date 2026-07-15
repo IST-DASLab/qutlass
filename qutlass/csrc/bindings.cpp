@@ -533,3 +533,8 @@ STABLE_TORCH_LIBRARY_IMPL(_qutlass_C, CUDA, ops) {
   ops.impl("mxfp4_transpose_mxfp8", TORCH_BOX(&QUTLASS::mxfp4_transpose_mxfp8));
 #endif
 }
+
+#ifndef QUTLASS_MINIMAL_BUILD
+#include "include/registration.h"
+REGISTER_EXTENSION(_CUDA)
+#endif

@@ -150,14 +150,23 @@ if __name__ == "__main__":
                 ],
                 define_macros=[("TARGET_CUDA_ARCH", str(cc))],
                 extra_compile_args={
-                    "cxx": ["-std=c++17"],
-                    "nvcc": get_cuda_arch_flags(),
+                    "cxx": [
+                        "-std=c++17",
+                        "-DUSE_CUDA",
+                        "-DTORCH_TARGET_VERSION=0x020B000000000000ULL",
+                    ],
+                    "nvcc": [
+                        "-DUSE_CUDA",
+                        "-DTORCH_TARGET_VERSION=0x020B000000000000ULL",
+                        *get_cuda_arch_flags(),
+                    ],
                 },
                 extra_link_args=[
                     "-lcudart",
                     "-lcuda",
                 ],
+                py_limited_api=True,
             )
         ],
-        cmdclass={"build_ext": BuildExtension},
+        cmdclass={"build_ext": BuildExtension.with_options(no_python_abi_suffix=True)},
     )

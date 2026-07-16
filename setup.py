@@ -57,6 +57,21 @@ def get_cuda_arch_flags():
         "arch=compute_120a,code=sm_120a",
         "-gencode",
         "arch=compute_100a,code=sm_100a",
+    ]
+    # Thor / GB10 (SM 10.1, renamed SM 11.0 in CUDA 13.0) shares the SM100
+    # tcgen05 block-scaled fp4 path. Only relevant when building on such a
+    # device (this is a per-machine build), so gate on the local capability
+    # rather than the CPU arch -- GB200/GH200 are also aarch64 but not Thor.
+    # Emit its SASS under whichever name the active toolkit uses: sm_110a on
+    # CUDA >= 13.0, sm_101a on <= 12.9.
+    cuda_ver = torch.version.cuda
+    if cc in (101, 110) and cuda_ver is not None:
+        cuda_major, cuda_minor = (int(v) for v in cuda_ver.split(".")[:2])
+        if (cuda_major, cuda_minor) >= (13, 0):
+            flags += ["-gencode", "arch=compute_110a,code=sm_110a"]
+        else:
+            flags += ["-gencode", "arch=compute_101a,code=sm_101a"]
+    flags += [
         "--expt-relaxed-constexpr",
         "--use_fast_math",
         "-std=c++17",

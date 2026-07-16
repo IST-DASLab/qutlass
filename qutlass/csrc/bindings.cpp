@@ -308,7 +308,7 @@ std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeMxAbsMax(torch::Tensor con
     } else if(HAD_GS==64){
         fusedQuantizeMxAbsMaxHad64_host(OUT, OUT_sf, A, B);
     } else if(HAD_GS==128){
-#if TARGET_CUDA_ARCH == 100
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110
         auto opts = torch::TensorOptions().dtype(torch::kFloat).device(A.device());
         auto global_scale = torch::tensor(0.0f, opts); //FIXME: add input global_scale to interface for consistency
         fusedQuantizeMxAbsMax_host_sm100(OUT, OUT_sf, A, B, global_scale);
@@ -399,7 +399,7 @@ std::tuple<torch::Tensor, torch::Tensor> fusedQuantizeNvAbsMax(torch::Tensor con
     } else if(HAD_GS==64){
         fusedQuantizeNvAbsMaxHad64_host(OUT, OUT_sf, A, B, global_scale);
     } else if(HAD_GS==128){
-#if TARGET_CUDA_ARCH == 100
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110
         fusedQuantizeNvAbsMax_host_sm100(OUT, OUT_sf, A, B, global_scale);
 #elif TARGET_CUDA_ARCH == 120
         fusedQuantizeNvAbsMaxHad128_host(OUT, OUT_sf, A, B, global_scale);

@@ -116,8 +116,8 @@ if __name__ == "__main__":
     if not m:
         raise RuntimeError(f"Cannot parse PyTorch version '{torch_version}'")
     major, minor = map(int, m.groups())
-    if major < 2 or (major == 2 and minor < 7):
-        raise RuntimeError(f"PyTorch version must be >= 2.7, but found {torch_version}")
+    if major < 2 or (major == 2 and minor < 11):
+        raise RuntimeError(f"PyTorch version must be >= 2.11, but found {torch_version}")
 
     third_party_cmake()
     remove_unwanted_pytorch_nvcc_flags()
@@ -128,6 +128,8 @@ if __name__ == "__main__":
         author_email="Roberto.LopezCastro@ist.ac.at",
         description="CUTLASS-Powered Quantized BLAS for Deep Learning.",
         packages=find_packages(),
+        python_requires=">=3.9",
+        options={"bdist_wheel": {"py_limited_api": "cp39"}},
         ext_modules=[
             CUDAExtension(
                 name="qutlass._CUDA",

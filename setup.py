@@ -50,6 +50,12 @@ def detect_cc():
 
 cc = detect_cc()
 
+# 2.11 -> 0x020b000000000000ULL
+TORCH_TARGET_MAJOR = 2
+TORCH_TARGET_MINOR = 11
+TORCH_TARGET_VERSION = (TORCH_TARGET_MAJOR << 56) | (TORCH_TARGET_MINOR << 48)
+TORCH_TARGET_VERSION_MACRO = f"0x{TORCH_TARGET_VERSION:016X}ULL"
+
 
 def get_cuda_arch_flags():
     flags = [
@@ -116,8 +122,11 @@ if __name__ == "__main__":
     if not m:
         raise RuntimeError(f"Cannot parse PyTorch version '{torch_version}'")
     major, minor = map(int, m.groups())
-    if major < 2 or (major == 2 and minor < 11):
-        raise RuntimeError(f"PyTorch version must be >= 2.11, but found {torch_version}")
+    if (major, minor) < (TORCH_TARGET_MAJOR, TORCH_TARGET_MINOR):
+        raise RuntimeError(
+            f"PyTorch version must be >= {TORCH_TARGET_MAJOR}.{TORCH_TARGET_MINOR} "
+            f"but found {torch_version}"
+        )
 
     third_party_cmake()
     remove_unwanted_pytorch_nvcc_flags()
@@ -154,11 +163,11 @@ if __name__ == "__main__":
                     "cxx": [
                         "-std=c++17",
                         "-DUSE_CUDA",
-                        "-DTORCH_TARGET_VERSION=0x020B000000000000ULL",
+                        f"-DTORCH_TARGET_VERSION={TORCH_TARGET_VERSION_MACRO}",
                     ],
                     "nvcc": [
                         "-DUSE_CUDA",
-                        "-DTORCH_TARGET_VERSION=0x020B000000000000ULL",
+                        f"-DTORCH_TARGET_VERSION={TORCH_TARGET_VERSION_MACRO}",
                         *get_cuda_arch_flags(),
                     ],
                 },

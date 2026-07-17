@@ -128,7 +128,6 @@ if __name__ == "__main__":
         author_email="Roberto.LopezCastro@ist.ac.at",
         description="CUTLASS-Powered Quantized BLAS for Deep Learning.",
         packages=find_packages(),
-        python_requires=">=3.9",
         options={"bdist_wheel": {"py_limited_api": "cp39"}},
         ext_modules=[
             CUDAExtension(

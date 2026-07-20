@@ -14,16 +14,6 @@
  * limitations under the License.
  */
 
-#include <ATen/ATen.h>
-#include <torch/types.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAGuard.h>
-#include <cuda_runtime.h>
-
-#ifndef QUTLASS_DISABLE_PYBIND
-#include <torch/extension.h>
-#endif
-
 #include <iostream>
 
 #include "cutlass/cutlass.h"
@@ -78,13 +68,13 @@ struct GemmRunner {
   GemmRunner() { }
 
   bool run(
-    torch::Tensor &out,
-    torch::Tensor &out_sf,
-    torch::Tensor const&x,
-    torch::Tensor const&y,
+    torch::stable::Tensor &out,
+    torch::stable::Tensor &out_sf,
+    torch::stable::Tensor const& x,
+    torch::stable::Tensor const& y,
     int32_t M, int32_t N, int32_t K,
-    torch::Device device,
-    torch::Tensor const& global_scale)
+    torch::stable::Device device,
+    torch::stable::Tensor const& global_scale)
   {
 
     using GemmCoord = cutlass::gemm::GemmCoord;
@@ -94,17 +84,17 @@ struct GemmRunner {
       {static_cast<GemmCoord::Index>(M),
        static_cast<GemmCoord::Index>(N),
        static_cast<GemmCoord::Index>(K)},
-      {(cutlass::bfloat16_t *)x.data_ptr(), K},
-      {(cutlass::bfloat16_t *)y.data_ptr(), N},
-      {(cutlass::float_e2m1_t *)out.data_ptr(), N},
-      {(cutlass::float_e2m1_t *)out.data_ptr(), N},
-      {(cutlass::float_ue4m3_t *)out_sf.data_ptr(), M},
-      static_cast<ElementAccumulator*>(global_scale.data_ptr()),
+      {static_cast<const cutlass::bfloat16_t*>(x.const_data_ptr()), K},
+      {static_cast<const cutlass::bfloat16_t*>(y.const_data_ptr()), N},
+      {static_cast<cutlass::float_e2m1_t*>(out.mutable_data_ptr()), N},
+      {static_cast<cutlass::float_e2m1_t*>(out.mutable_data_ptr()), N},
+      {static_cast<cutlass::float_ue4m3_t*>(out_sf.mutable_data_ptr()), M},
+      static_cast<ElementAccumulator*>(const_cast<void*>(global_scale.const_data_ptr())),
       cutlass::bfloat16_t(0) //TODO (later): float
     };
 
-    const at::cuda::OptionalCUDAGuard device_guard(device_of(x));
-    cudaStream_t stream = at::cuda::getCurrentCUDAStream(device.index());
+    const torch::stable::accelerator::DeviceGuard device_guard(x.get_device_index());
+    cudaStream_t stream = get_current_cuda_stream(device.index());
 
     CUTLASS_CHECK(gemmOp.initialize(arguments, nullptr, stream));
 
@@ -116,11 +106,11 @@ struct GemmRunner {
 };
 
 
-void fusedQuantizeNvQuest_host(torch::Tensor& D,
-                        torch::Tensor& D_sf,
-                        torch::Tensor const& A,
-                        torch::Tensor const& B,
-                        torch::Tensor const& global_scale)
+void fusedQuantizeNvQuest_host(torch::stable::Tensor& D,
+                        torch::stable::Tensor& D_sf,
+                        torch::stable::Tensor const& A,
+                        torch::stable::Tensor const& B,
+                        torch::stable::Tensor const& global_scale)
 {
   int32_t M = A.numel() / 16;
   int32_t N = B.size(1);
@@ -134,11 +124,11 @@ void fusedQuantizeNvQuest_host(torch::Tensor& D,
   bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
 }
 
-void fusedQuantizeNvQuestHad32_host(torch::Tensor& D,
-                        torch::Tensor& D_sf,
-                        torch::Tensor const& A,
-                        torch::Tensor const& B,
-                        torch::Tensor const& global_scale)
+void fusedQuantizeNvQuestHad32_host(torch::stable::Tensor& D,
+                        torch::stable::Tensor& D_sf,
+                        torch::stable::Tensor const& A,
+                        torch::stable::Tensor const& B,
+                        torch::stable::Tensor const& global_scale)
 {
   int32_t M = A.numel() / 32;
   int32_t N = B.size(1);
@@ -152,11 +142,11 @@ void fusedQuantizeNvQuestHad32_host(torch::Tensor& D,
   bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
 }
 
-void fusedQuantizeNvQuestHad64_host(torch::Tensor& D,
-                        torch::Tensor& D_sf,
-                        torch::Tensor const& A,
-                        torch::Tensor const& B,
-                        torch::Tensor const& global_scale)
+void fusedQuantizeNvQuestHad64_host(torch::stable::Tensor& D,
+                        torch::stable::Tensor& D_sf,
+                        torch::stable::Tensor const& A,
+                        torch::stable::Tensor const& B,
+                        torch::stable::Tensor const& global_scale)
 {
   int32_t M = A.numel() / 64;
   int32_t N = B.size(1);
@@ -170,11 +160,11 @@ void fusedQuantizeNvQuestHad64_host(torch::Tensor& D,
   bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
 }
 
-void fusedQuantizeNvQuestHad128_host(torch::Tensor& D,
-                        torch::Tensor& D_sf,
-                        torch::Tensor const& A,
-                        torch::Tensor const& B,
-                        torch::Tensor const& global_scale)
+void fusedQuantizeNvQuestHad128_host(torch::stable::Tensor& D,
+                        torch::stable::Tensor& D_sf,
+                        torch::stable::Tensor const& A,
+                        torch::stable::Tensor const& B,
+                        torch::stable::Tensor const& global_scale)
 {
   int32_t M = A.numel() / 128;
   int32_t N = B.size(1);
@@ -188,11 +178,11 @@ void fusedQuantizeNvQuestHad128_host(torch::Tensor& D,
   bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
 }
 
-void fusedQuantizeNvAbsMax_host(torch::Tensor& D,
-                        torch::Tensor& D_sf,
-                        torch::Tensor const& A,
-                        torch::Tensor const& B,
-                        torch::Tensor const& global_scale)
+void fusedQuantizeNvAbsMax_host(torch::stable::Tensor& D,
+                        torch::stable::Tensor& D_sf,
+                        torch::stable::Tensor const& A,
+                        torch::stable::Tensor const& B,
+                        torch::stable::Tensor const& global_scale)
 {
   int32_t M = A.numel() / 16;
   int32_t N = B.size(1);
@@ -206,11 +196,11 @@ void fusedQuantizeNvAbsMax_host(torch::Tensor& D,
   bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
 }
 
-void fusedQuantizeNvAbsMaxHad32_host(torch::Tensor& D,
-                        torch::Tensor& D_sf,
-                        torch::Tensor const& A,
-                        torch::Tensor const& B,
-                        torch::Tensor const& global_scale)
+void fusedQuantizeNvAbsMaxHad32_host(torch::stable::Tensor& D,
+                        torch::stable::Tensor& D_sf,
+                        torch::stable::Tensor const& A,
+                        torch::stable::Tensor const& B,
+                        torch::stable::Tensor const& global_scale)
 {
   int32_t M = A.numel() / 32;
   int32_t N = B.size(1);
@@ -224,11 +214,11 @@ void fusedQuantizeNvAbsMaxHad32_host(torch::Tensor& D,
   bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
 }
 
-void fusedQuantizeNvAbsMaxHad64_host(torch::Tensor& D,
-                        torch::Tensor& D_sf,
-                        torch::Tensor const& A,
-                        torch::Tensor const& B,
-                        torch::Tensor const& global_scale)
+void fusedQuantizeNvAbsMaxHad64_host(torch::stable::Tensor& D,
+                        torch::stable::Tensor& D_sf,
+                        torch::stable::Tensor const& A,
+                        torch::stable::Tensor const& B,
+                        torch::stable::Tensor const& global_scale)
 {
   int32_t M = A.numel() / 64;
   int32_t N = B.size(1);
@@ -242,11 +232,11 @@ void fusedQuantizeNvAbsMaxHad64_host(torch::Tensor& D,
   bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
 }
 
-void fusedQuantizeNvAbsMaxHad128_host(torch::Tensor& D,
-                        torch::Tensor& D_sf,
-                        torch::Tensor const& A,
-                        torch::Tensor const& B,
-                        torch::Tensor const& global_scale)
+void fusedQuantizeNvAbsMaxHad128_host(torch::stable::Tensor& D,
+                        torch::stable::Tensor& D_sf,
+                        torch::stable::Tensor const& A,
+                        torch::stable::Tensor const& B,
+                        torch::stable::Tensor const& global_scale)
 {
   int32_t M = A.numel() / 128;
   int32_t N = B.size(1);

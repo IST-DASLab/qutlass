@@ -14,16 +14,6 @@
  * limitations under the License.
  */
 
-#include <ATen/ATen.h>
-#include <torch/types.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAGuard.h>
-#include <cuda_runtime.h>
-
-#ifndef QUTLASS_DISABLE_PYBIND
-#include <torch/extension.h>
-#endif
-
 #include "cutlass/cutlass.h"
 #include "cutlass/gemm/collective/collective_builder.hpp"
 #include "cutlass/epilogue/collective/collective_builder.hpp"
@@ -99,12 +89,12 @@ struct FpGemm {
 
 template <typename Gemm, typename ScaleType>
 typename Gemm::Arguments args_from_options(
-                                at::Tensor& D,
-                                at::Tensor const& A,
-                                at::Tensor const& B,
-                                at::Tensor const& A_sf,
-                                at::Tensor const& B_sf,
-                                torch::Tensor const& alpha,
+                                torch::stable::Tensor& D,
+                                torch::stable::Tensor const& A,
+                                torch::stable::Tensor const& B,
+                                torch::stable::Tensor const& A_sf,
+                                torch::stable::Tensor const& B_sf,
+                                torch::stable::Tensor const& alpha,
                                 int M, int N, int K)
 {
     using ElementA       = typename Gemm::ElementA;
@@ -136,31 +126,31 @@ typename Gemm::Arguments args_from_options(
         cutlass::gemm::GemmUniversalMode::kGemm,
         {M, N, K, 1},
         {
-            static_cast<ElementA const*>(A.data_ptr()),      stride_A,
-            static_cast<ElementB const*>(B.data_ptr()),      stride_B,
-            static_cast<ElementSFA const*>(A_sf.data_ptr()), layout_SFA,
-            static_cast<ElementSFB const*>(B_sf.data_ptr()), layout_SFB},
+            static_cast<ElementA const*>(A.const_data_ptr()),      stride_A,
+            static_cast<ElementB const*>(B.const_data_ptr()),      stride_B,
+            static_cast<ElementSFA const*>(A_sf.const_data_ptr()), layout_SFA,
+            static_cast<ElementSFB const*>(B_sf.const_data_ptr()), layout_SFB},
         {
             {},
-            static_cast<ElementD const*>(D.data_ptr()), stride_D,
-            static_cast<ElementD*>(D.data_ptr()),       stride_D
+            static_cast<ElementD const*>(D.const_data_ptr()), stride_D,
+            static_cast<ElementD*>(D.mutable_data_ptr()),       stride_D
         }
     };
     auto& fusion_args = arguments.epilogue.thread;
-    fusion_args.alpha_ptr = static_cast<ElementAccumulator const*>(alpha.data_ptr());
+    fusion_args.alpha_ptr = static_cast<ElementAccumulator const*>(alpha.const_data_ptr());
 
     return arguments;
 }
 
 template <typename Gemm, typename ScaleType>
-void runGemm(at::Tensor& D,
-             at::Tensor const& A,
-             at::Tensor const& B,
-             at::Tensor const& A_sf,
-             at::Tensor const& B_sf,
-             torch::Tensor const& alpha,
+void runGemm(torch::stable::Tensor& D,
+             torch::stable::Tensor const& A,
+             torch::stable::Tensor const& B,
+             torch::stable::Tensor const& A_sf,
+             torch::stable::Tensor const& B_sf,
+             torch::stable::Tensor const& alpha,
              int M, int N, int K,
-             torch::Device device)
+             torch::stable::Device device)
 {
     Gemm gemm;
 
@@ -171,8 +161,8 @@ void runGemm(at::Tensor& D,
 
     cutlass::device_memory::allocation<uint8_t> workspace(workspace_size);
 
-    const at::cuda::OptionalCUDAGuard device_guard(device_of(A));
-    cudaStream_t stream = at::cuda::getCurrentCUDAStream(device.index());
+    const torch::stable::accelerator::DeviceGuard device_guard(A.get_device_index());
+    cudaStream_t stream = get_current_cuda_stream(device.index());
 
     CUTLASS_CHECK(gemm.can_implement(arguments));
 
@@ -181,16 +171,16 @@ void runGemm(at::Tensor& D,
     CUTLASS_CHECK(gemm.run(arguments, workspace.get(), stream));
 }
 
-void matmul_host_mxf4_bf16_tn(torch::Tensor& D,
-                              torch::Tensor const& A,
-                              torch::Tensor const& B,
-                              torch::Tensor const& A_sf,
-                              torch::Tensor const& B_sf,
-                              torch::Tensor const& alpha)
+void matmul_host_mxf4_bf16_tn(torch::stable::Tensor& D,
+                              torch::stable::Tensor const& A,
+                              torch::stable::Tensor const& B,
+                              torch::stable::Tensor const& A_sf,
+                              torch::stable::Tensor const& B_sf,
+                              torch::stable::Tensor const& alpha)
 {
-    auto const m = A.sizes()[0];
-    auto const n = B.sizes()[0];
-    auto const k = A.sizes()[1] * 2;
+    auto const m = A.size(0);
+    auto const n = B.size(0);
+    auto const k = A.size(1) * 2;
 
     using ElementA   = cutlass::mx_float4_t<cutlass::float_e2m1_t>;
     using LayoutATag = cutlass::layout::RowMajor;
@@ -253,20 +243,20 @@ void matmul_host_mxf4_bf16_tn(torch::Tensor& D,
                 >(D, A, B, A_sf, B_sf, alpha, m, n, k, A.device());
     }
 #else
-    TORCH_CHECK(false, "Unsupported CUDA arch");
+    STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
 }
 
-void matmul_host_nvf4_bf16_tn(torch::Tensor& D,
-                              torch::Tensor const& A,
-                              torch::Tensor const& B,
-                              torch::Tensor const& A_sf,
-                              torch::Tensor const& B_sf,
-                              torch::Tensor const& alpha)
+void matmul_host_nvf4_bf16_tn(torch::stable::Tensor& D,
+                              torch::stable::Tensor const& A,
+                              torch::stable::Tensor const& B,
+                              torch::stable::Tensor const& A_sf,
+                              torch::stable::Tensor const& B_sf,
+                              torch::stable::Tensor const& alpha)
 {
-    auto const m = A.sizes()[0];
-    auto const n = B.sizes()[0];
-    auto const k = A.sizes()[1] * 2;
+    auto const m = A.size(0);
+    auto const n = B.size(0);
+    auto const k = A.size(1) * 2;
 
     using ElementA   = cutlass::nv_float4_t<cutlass::float_e2m1_t>;
     using LayoutATag = cutlass::layout::RowMajor;
@@ -330,21 +320,21 @@ void matmul_host_nvf4_bf16_tn(torch::Tensor& D,
                 >(D, A, B, A_sf, B_sf, alpha, m, n, k, A.device());
     }
 #else
-    TORCH_CHECK(false, "Unsupported CUDA arch");
+    STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
 
 }
 
-void matmul_host_mxf8_bf16_tn(torch::Tensor& D,
-                              torch::Tensor const& A,
-                              torch::Tensor const& B,
-                              torch::Tensor const& A_sf,
-                              torch::Tensor const& B_sf,
-                              torch::Tensor const& alpha)
+void matmul_host_mxf8_bf16_tn(torch::stable::Tensor& D,
+                              torch::stable::Tensor const& A,
+                              torch::stable::Tensor const& B,
+                              torch::stable::Tensor const& A_sf,
+                              torch::stable::Tensor const& B_sf,
+                              torch::stable::Tensor const& alpha)
 {
-    auto const m = A.sizes()[0];
-    auto const n = B.sizes()[0];
-    auto const k = A.sizes()[1];
+    auto const m = A.size(0);
+    auto const n = B.size(0);
+    auto const k = A.size(1);
 
     using ElementA   = cutlass::mx_float8_t<cutlass::float_e4m3_t>;
     using LayoutATag = cutlass::layout::RowMajor;
@@ -391,20 +381,20 @@ void matmul_host_mxf8_bf16_tn(torch::Tensor& D,
                     ElementB, LayoutBTag, AlignmentB>::Gemm, cutlass::float_ue8m0_t
                 >(D, A, B, A_sf, B_sf, alpha, m, n, k, A.device());
 #else
-    TORCH_CHECK(false, "Unsupported CUDA arch");
+    STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
 }
 
-void matmul_host_mxf8_bf16_nn(torch::Tensor& D,
-                              torch::Tensor const& A,
-                              torch::Tensor const& B,
-                              torch::Tensor const& A_sf,
-                              torch::Tensor const& B_sf,
-                              torch::Tensor const& alpha)
+void matmul_host_mxf8_bf16_nn(torch::stable::Tensor& D,
+                              torch::stable::Tensor const& A,
+                              torch::stable::Tensor const& B,
+                              torch::stable::Tensor const& A_sf,
+                              torch::stable::Tensor const& B_sf,
+                              torch::stable::Tensor const& alpha)
 {
-    auto const m = A.sizes()[1];
-    auto const n = B.sizes()[0];
-    auto const k = A.sizes()[0];
+    auto const m = A.size(1);
+    auto const n = B.size(0);
+    auto const k = A.size(0);
 
     using ElementA   = cutlass::mx_float8_t<cutlass::float_e4m3_t>;
     using LayoutATag = cutlass::layout::ColumnMajor;
@@ -439,6 +429,6 @@ void matmul_host_mxf8_bf16_nn(torch::Tensor& D,
                     >(D, A, B, A_sf, B_sf, alpha, m, n, k, A.device());
     }
 #else
-    TORCH_CHECK(false, "Unsupported CUDA arch");
+    STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
 }

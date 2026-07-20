@@ -8,6 +8,7 @@ version = "0.2.0"
 description = "qutlass"
 authors = [{name = "Roberto L. Castro", email = "Roberto.LopezCastro@ist.ac.at"}]
 license = {text = "Apache-2.0"}
+requires-python = ">=3.9"
 dependencies = []
 
 [tool.setuptools]

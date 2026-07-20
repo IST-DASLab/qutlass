@@ -50,6 +50,12 @@ def detect_cc():
 
 cc = detect_cc()
 
+# 2.11 -> 0x020b000000000000ULL
+TORCH_TARGET_MAJOR = 2
+TORCH_TARGET_MINOR = 11
+TORCH_TARGET_VERSION = (TORCH_TARGET_MAJOR << 56) | (TORCH_TARGET_MINOR << 48)
+TORCH_TARGET_VERSION_MACRO = f"0x{TORCH_TARGET_VERSION:016X}ULL"
+
 
 def get_cuda_arch_flags():
     flags = [
@@ -116,8 +122,11 @@ if __name__ == "__main__":
     if not m:
         raise RuntimeError(f"Cannot parse PyTorch version '{torch_version}'")
     major, minor = map(int, m.groups())
-    if major < 2 or (major == 2 and minor < 7):
-        raise RuntimeError(f"PyTorch version must be >= 2.7, but found {torch_version}")
+    if (major, minor) < (TORCH_TARGET_MAJOR, TORCH_TARGET_MINOR):
+        raise RuntimeError(
+            f"PyTorch version must be >= {TORCH_TARGET_MAJOR}.{TORCH_TARGET_MINOR} "
+            f"but found {torch_version}"
+        )
 
     third_party_cmake()
     remove_unwanted_pytorch_nvcc_flags()
@@ -128,6 +137,7 @@ if __name__ == "__main__":
         author_email="Roberto.LopezCastro@ist.ac.at",
         description="CUTLASS-Powered Quantized BLAS for Deep Learning.",
         packages=find_packages(),
+        options={"bdist_wheel": {"py_limited_api": "cp39"}},
         ext_modules=[
             CUDAExtension(
                 name="qutlass._CUDA",
@@ -150,13 +160,22 @@ if __name__ == "__main__":
                 ],
                 define_macros=[("TARGET_CUDA_ARCH", str(cc))],
                 extra_compile_args={
-                    "cxx": ["-std=c++17"],
-                    "nvcc": get_cuda_arch_flags(),
+                    "cxx": [
+                        "-std=c++17",
+                        "-DUSE_CUDA",
+                        f"-DTORCH_TARGET_VERSION={TORCH_TARGET_VERSION_MACRO}",
+                    ],
+                    "nvcc": [
+                        "-DUSE_CUDA",
+                        f"-DTORCH_TARGET_VERSION={TORCH_TARGET_VERSION_MACRO}",
+                        *get_cuda_arch_flags(),
+                    ],
                 },
                 extra_link_args=[
                     "-lcudart",
                     "-lcuda",
                 ],
+                py_limited_api=True,
             )
         ],
         cmdclass={"build_ext": BuildExtension},

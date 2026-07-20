@@ -15,11 +15,13 @@
 #
 
 import torch
-import qutlass._CUDA
+import qutlass._CUDA  # noqa: F401 - registers torch.ops._qutlass_C
 from qutlass.utils import get_padded_shape_mx, get_padded_shape_nv, pad_to_block
 from typing import Literal
 
 import warnings
+
+qutlass_CUDA = torch.ops._qutlass_C
 
 try:
     from flashinfer import mm_fp4
@@ -38,7 +40,7 @@ def matmul_mxf4_bf16_tn(
     backend: Literal["cutlass", "flashinfer"] = "cutlass",
 ) -> torch.Tensor:
     if backend == "cutlass":
-        return qutlass._CUDA.matmul_mxf4_bf16_tn(a, b, a_sf, b_sf, alpha)
+        return qutlass_CUDA.matmul_mxf4_bf16_tn(a, b, a_sf, b_sf, alpha)
     elif backend == "flashinfer":
         if not _HAS_FLASHINFER:
             raise ImportError(
@@ -81,7 +83,7 @@ def matmul_ada_mxf4_bf16_tn(
     b_sf: torch.Tensor,
     alpha: torch.Tensor,
 ) -> torch.Tensor:
-    return qutlass._CUDA.matmul_ada_mxf4_bf16_tn(a, b, a_sf, b_sf, alpha)
+    return qutlass_CUDA.matmul_ada_mxf4_bf16_tn(a, b, a_sf, b_sf, alpha)
 
 
 def matmul_nvf4_bf16_tn(
@@ -93,7 +95,7 @@ def matmul_nvf4_bf16_tn(
     backend: Literal["cutlass", "flashinfer"] = "cutlass",
 ) -> torch.Tensor:
     if backend == "cutlass":
-        return qutlass._CUDA.matmul_nvf4_bf16_tn(a, b, a_sf, b_sf, alpha)
+        return qutlass_CUDA.matmul_nvf4_bf16_tn(a, b, a_sf, b_sf, alpha)
     elif backend == "flashinfer":
         if not _HAS_FLASHINFER:
             raise ImportError(
@@ -134,14 +136,14 @@ def matmul_mxf8_bf16_tn(a: torch.Tensor,
                         block_scale_a: torch.Tensor,
                         block_scale_b: torch.Tensor,
                         alpha: torch.Tensor) -> torch.Tensor:
-    return qutlass._CUDA.matmul_mxf8_bf16_tn(a, b, block_scale_a, block_scale_b, alpha)
+    return qutlass_CUDA.matmul_mxf8_bf16_tn(a, b, block_scale_a, block_scale_b, alpha)
 
 def matmul_mxf8_bf16_nn(a: torch.Tensor,
                         b: torch.Tensor,
                         block_scale_a: torch.Tensor,
                         block_scale_b: torch.Tensor,
                         alpha: torch.Tensor) -> torch.Tensor:
-    return qutlass._CUDA.matmul_mxf8_bf16_nn(a, b, block_scale_a, block_scale_b, alpha)
+    return qutlass_CUDA.matmul_mxf8_bf16_nn(a, b, block_scale_a, block_scale_b, alpha)
 
 
 def fusedQuantizeMx(
@@ -165,15 +167,15 @@ def fusedQuantizeMx(
             clip_mask = torch.empty(
                 *a.shape[:-1], a.size(-1) // 8, dtype=torch.uint8, device=a.device
             )
-            return qutlass._CUDA.fusedQuantizeMxQuestWithMask(
+            return qutlass_CUDA.fusedQuantizeMxQuestWithMask(
                 a, b, xh_e2m1, xh_e8m0, clip_mask
             )
         else:
-            return qutlass._CUDA.fusedQuantizeMxQuest(a, b, xh_e2m1, xh_e8m0)
+            return qutlass_CUDA.fusedQuantizeMxQuest(a, b, xh_e2m1, xh_e8m0)
     elif method == "abs_max":
         if return_mask:
             raise ValueError("return_mask is only supported for method 'quest'")
-        return qutlass._CUDA.fusedQuantizeMxAbsMax(a, b, xh_e2m1, xh_e8m0)
+        return qutlass_CUDA.fusedQuantizeMxAbsMax(a, b, xh_e2m1, xh_e8m0)
     else:
         raise ValueError(f"invalid method {method!r}, must be 'quest' or 'abs_max'")
 
@@ -194,9 +196,9 @@ def fusedQuantizeNv(
     )
 
     if method == "quest":
-        return qutlass._CUDA.fusedQuantizeNvQuest(a, b, xh_e2m1, xh_e4m3, global_scale)
+        return qutlass_CUDA.fusedQuantizeNvQuest(a, b, xh_e2m1, xh_e4m3, global_scale)
     elif method == "abs_max":
-        return qutlass._CUDA.fusedQuantizeNvAbsMax(a, b, xh_e2m1, xh_e4m3, global_scale)
+        return qutlass_CUDA.fusedQuantizeNvAbsMax(a, b, xh_e2m1, xh_e4m3, global_scale)
     else:
         raise ValueError(f"invalid method {method!r}, must be 'quest' or 'abs_max'")
 
@@ -236,7 +238,7 @@ def backward_t_bf16(
         and xh_e8m0.is_contiguous()
     )
 
-    qutlass._CUDA.backward_t_bf16(x, h, xh_e2m1, xh_e8m0)
+    qutlass_CUDA.backward_t_bf16(x, h, xh_e2m1, xh_e8m0)
 
     return xh_e2m1, xh_e8m0
 
@@ -275,7 +277,7 @@ def backward_qt_bf16(
         and xh_e8m0.is_contiguous()
     )
 
-    qutlass._CUDA.backward_qt_bf16(x_e2m1, x_e8m0, h, alpha, xh_e2m1, xh_e8m0)
+    qutlass_CUDA.backward_qt_bf16(x_e2m1, x_e8m0, h, alpha, xh_e2m1, xh_e8m0)
 
     return xh_e2m1, xh_e8m0
 
@@ -286,7 +288,7 @@ def backward_bf16_square_double_mxfp8(x_bf16: torch.Tensor) -> tuple[torch.Tenso
     row_scales = torch.empty(x_bf16.shape[0], x_bf16.shape[1] // 32, device=x_bf16.device, dtype=torch.float8_e8m0fnu)
     column_scales = torch.empty(x_bf16.shape[1], x_bf16.shape[0] // 32, device=x_bf16.device, dtype=torch.float8_e8m0fnu)
 
-    qutlass._CUDA.backward_bf16_square_double_mxfp8(x_bf16, x_fp8, row_scales, column_scales)
+    qutlass_CUDA.backward_bf16_square_double_mxfp8(x_bf16, x_fp8, row_scales, column_scales)
 
     return x_fp8, row_scales, column_scales
 
@@ -303,6 +305,6 @@ def mxfp4_transpose_mxfp8(x_fp4: torch.Tensor, scales: torch.Tensor) -> tuple[to
     x_fp8 = torch.empty(x_fp4.shape[1] * 2, x_fp4.shape[0], device=x_fp4.device, dtype=torch.float8_e4m3fn)
     shared_exps = torch.empty(x_fp4.shape[1] * 2, x_fp4.shape[0] // 32, device=x_fp4.device, dtype=torch.float8_e8m0fnu)
 
-    qutlass._CUDA.mxfp4_transpose_mxfp8(x_fp4, scales, x_fp8, shared_exps)
+    qutlass_CUDA.mxfp4_transpose_mxfp8(x_fp4, scales, x_fp8, shared_exps)
 
     return x_fp8, shared_exps

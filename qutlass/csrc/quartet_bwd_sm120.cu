@@ -22,10 +22,6 @@
 #include <cuda_runtime.h>
 #include <mma.h>
 
-#ifndef QUTLASS_DISABLE_PYBIND
-#include <torch/extension.h>
-#endif
-
 #include <backward_host.h>
 
 template <typename T>
@@ -457,7 +453,7 @@ int backward_t_bf16_cuda(const void* x_ptr,
         size_b
     );
 #else
-     TORCH_CHECK(false, "Unsupported CUDA arch");
+     STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
 
     return 0;
@@ -491,7 +487,7 @@ int backward_qt_bf16_cuda(const void* x_e2m1_ptr,
         size_b
     );
 #else
-    TORCH_CHECK(false, "Unsupported CUDA arch");
+    STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
     return 0;
 }

@@ -39,10 +39,6 @@
 */
 #pragma once
 
-#ifndef QUTLASS_DISABLE_PYBIND
-#include <torch/extension.h>
-#endif
-
 #include "cutlass/array.h"
 #include "cutlass/cutlass.h"
 #include "cutlass/epilogue/thread/linear_combination_params.h"

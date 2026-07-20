@@ -14,16 +14,6 @@
  * limitations under the License.
  */
 
-#include <ATen/ATen.h>
-#include <torch/types.h>
-#include <ATen/cuda/CUDAContext.h>
-#include <c10/cuda/CUDAGuard.h>
-#include <cuda_runtime.h>
-
-#ifndef QUTLASS_DISABLE_PYBIND
-#include <torch/extension.h>
-#endif
-
 #include <stddef.h>
 
 #include <cutlass/core_io.h>
@@ -37,13 +27,13 @@
 #include <gemm.h>
 
 template <typename TileShape, typename WarpShape, int kStages>
-void qutlass_matmul_mxf4_v1(torch::Tensor const&input,
-                            torch::Tensor const&weight,
-                            torch::Tensor const&input_sf,
-                            torch::Tensor const&weight_sf,
-                            torch::Tensor &out,
-                            torch::Tensor const& alpha,
-                            torch::Device device)
+void qutlass_matmul_mxf4_v1(torch::stable::Tensor const& input,
+                            torch::stable::Tensor const& weight,
+                            torch::stable::Tensor const& input_sf,
+                            torch::stable::Tensor const& weight_sf,
+                            torch::stable::Tensor &out,
+                            torch::stable::Tensor const& alpha,
+                            torch::stable::Device device)
 {
   auto M = input.size(0);
   auto N = weight.size(0);
@@ -87,29 +77,30 @@ void qutlass_matmul_mxf4_v1(torch::Tensor const&input,
   cutlass::gemm::GemmCoord problem_size(M, N, K);
 
   cutlass::TensorRef<ElementInputA, LayoutInputA> input_ref(
-      static_cast<ElementInputA*>(input.data_ptr()),
+      static_cast<ElementInputA*>(const_cast<void*>(input.const_data_ptr())),
       LayoutInputA::packed(input_size));
 
   cutlass::TensorRef<ElementInputB, LayoutInputB> weight_ref(
-      static_cast<ElementInputB*>(weight.data_ptr()),
+      static_cast<ElementInputB*>(const_cast<void*>(weight.const_data_ptr())),
       LayoutInputB::packed(weight_size));
 
   cutlass::TensorRef<ElementOutput, LayoutOutput> out_ref(
-      static_cast<ElementOutput*>(out.data_ptr()),
+      static_cast<ElementOutput*>(out.mutable_data_ptr()),
       LayoutOutput::packed(output_size));
 
   typename Gemm::Arguments arguments{
       problem_size,
       input_ref,
-      reinterpret_cast<const cutlass::float_ue8m0_t*>(input_sf.data_ptr()),
+      reinterpret_cast<const cutlass::float_ue8m0_t*>(input_sf.const_data_ptr()),
       weight_ref,
-      reinterpret_cast<const cutlass::float_ue8m0_t*>(weight_sf.data_ptr()),
+      reinterpret_cast<const cutlass::float_ue8m0_t*>(weight_sf.const_data_ptr()),
       out_ref,
       out_ref,
       {},
       1
   };
-  arguments.epilogue.alpha_ptr = static_cast<ElementAccumulator const*>(alpha.data_ptr());
+  arguments.epilogue.alpha_ptr =
+      static_cast<ElementAccumulator const*>(alpha.const_data_ptr());
 
   Gemm gemm_op;
 
@@ -118,20 +109,20 @@ void qutlass_matmul_mxf4_v1(torch::Tensor const&input,
 
   CUTLASS_CHECK(gemm_op.can_implement(arguments));
 
-  const at::cuda::OptionalCUDAGuard device_guard(device_of(input));
-  cudaStream_t stream = at::cuda::getCurrentCUDAStream(device.index());
+  const torch::stable::accelerator::DeviceGuard device_guard(input.get_device_index());
+  cudaStream_t stream = get_current_cuda_stream(device.index());
 
   CUTLASS_CHECK(gemm_op.initialize(arguments, workspace.get(), stream));
 
   CUTLASS_CHECK(gemm_op(stream));
 }
 
-void matmul_host_ada_mxf4_bf16_tn(torch::Tensor const&input,
-                                  torch::Tensor const&weight,
-                                  torch::Tensor const&input_sf,
-                                  torch::Tensor const&weight_sf,
-                                  torch::Tensor &out,
-                                  torch::Tensor const& alpha)
+void matmul_host_ada_mxf4_bf16_tn(torch::stable::Tensor const& input,
+                                  torch::stable::Tensor const& weight,
+                                  torch::stable::Tensor const& input_sf,
+                                  torch::stable::Tensor const& weight_sf,
+                                  torch::stable::Tensor &out,
+                                  torch::stable::Tensor const& alpha)
 {
   using TileShape = typename cutlass::gemm::GemmShape<16, 16, 256>;
   using WarpShape = typename cutlass::gemm::GemmShape<16, 16, 256>;
@@ -140,6 +131,6 @@ void matmul_host_ada_mxf4_bf16_tn(torch::Tensor const&input,
 #if TARGET_CUDA_ARCH == 120
   qutlass_matmul_mxf4_v1<TileShape, WarpShape, kStages>(input, weight, input_sf, weight_sf, out, alpha, input.device());
 #else
-    TORCH_CHECK(false, "matmul_ada_mxf4_bf16_tn was optimized for sm120. For other architectures, please use matmul_mxf4_bf16_tn instead");
+    STD_TORCH_CHECK(false, "matmul_ada_mxf4_bf16_tn was optimized for sm120. For other architectures, please use matmul_mxf4_bf16_tn instead");
 #endif
 }

@@ -275,7 +275,7 @@ def test_llama_shapes(model: str, layer_idx: int, batch: int, rot_size: int, bac
     assert out.equal(out_ref.to(dtype=out.dtype))
 
 
-@pytest.mark.parametrize("rows", [1, 127, 128, 129])
+@pytest.mark.parametrize("rows", [1, 127, 128, 129, 255, 256, 257])
 @pytest.mark.parametrize("global_scale_value", [1.0, 6.0])
 @pytest.mark.parametrize("rot_size", ROT_SIZES)
 @pytest.mark.parametrize("groups_per_row", [1, 3])

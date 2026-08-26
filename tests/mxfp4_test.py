@@ -320,7 +320,7 @@ def test_sf_swizzled_layout_fusion(rot_size: int):
     for method in ["quest", "abs_max"]:
         for groups_per_row in [1, 3, 4]:
             k = rot_size * groups_per_row
-            for rows in [1, 128, 129]:
+            for rows in [1, 127, 128, 129, 255, 256, 257]:
                 a = torch.randn(rows, k, dtype=dtype, device=device) * 10.0
 
                 # Kernel blocked output (flat 1-D)

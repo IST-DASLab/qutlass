@@ -150,6 +150,76 @@ namespace detail {
 
     return frg_output;
   }
+
+  // Clear the row suffix in the final 128-row x 4-column blocked atom. Each
+  // warp owns one 512-byte atom and each lane owns an aligned 16-byte segment
+  // containing four rows spaced 32 rows apart.
+  CUTLASS_DEVICE void
+  zero_blocked_sf_row_padding(
+      uint8_t* sf_ptr,
+      int n_col_blocks,
+      int logical_sf_rows,
+      int thread_idx)
+  {
+    int first_padding_row = logical_sf_rows & 127;
+    if (first_padding_row == 0) {
+      return;
+    }
+
+    int lane_idx = thread_idx & 31;
+    int first_padding_quadrant = 0;
+    if (first_padding_row > lane_idx) {
+      first_padding_quadrant = (first_padding_row - lane_idx + 31) >> 5;
+    }
+    if (first_padding_quadrant >= 4) {
+      return;
+    }
+
+    int row_block = logical_sf_rows >> 7;
+    int warp_idx = thread_idx >> 5;
+    for (int col_block = warp_idx;
+         col_block < n_col_blocks; col_block += 4) {
+      int atom_offset = (row_block * n_col_blocks + col_block) * 512;
+      uint8_t* segment = sf_ptr + atom_offset + lane_idx * 16;
+      if (first_padding_quadrant == 0) {
+        *reinterpret_cast<uint4*>(segment) = uint4{0, 0, 0, 0};
+      }
+      else if (first_padding_quadrant == 1) {
+        *reinterpret_cast<uint32_t*>(segment + 4) = 0;
+        *reinterpret_cast<uint2*>(segment + 8) = uint2{0, 0};
+      }
+      else if (first_padding_quadrant == 2) {
+        *reinterpret_cast<uint2*>(segment + 8) = uint2{0, 0};
+      }
+      else {
+        *reinterpret_cast<uint32_t*>(segment + 12) = 0;
+      }
+    }
+  }
+
+  // Rotation sizes below 128 can leave a partial final scale-factor column
+  // atom. Keep that uncommon path out of the row-padding fast path.
+  static __device__ __noinline__ void
+  zero_blocked_sf_column_padding(
+      uint8_t* sf_ptr,
+      int n_col_blocks,
+      int logical_sf_rows,
+      int logical_sf_cols,
+      int thread_idx)
+  {
+    int column_padding = n_col_blocks * 4 - logical_sf_cols;
+    int column_padding_elems = logical_sf_rows * column_padding;
+    for (int flat = thread_idx; flat < column_padding_elems; flat += 128) {
+      int sf_row = flat / column_padding;
+      int sf_col = logical_sf_cols + flat % column_padding;
+      int offset = (sf_row >> 7) * (n_col_blocks * 512)
+                 + (sf_col >> 2) * 512
+                 + (sf_row & 31) * 16
+                 + ((sf_row & 127) >> 5) * 4
+                 + (sf_col & 3);
+      sf_ptr[offset] = 0;
+    }
+  }
 }
 /////////////////////////////////////////////////////////////////////////////////////////////////
 
@@ -450,23 +520,21 @@ struct Sm100BlockScaleFactorRowStore {
     int cta_m = size<0>(args.tile_shape_mnk);
     int num_tiles_m = (int(M) + cta_m - 1) / cta_m;
     if (tile_coord_m == num_tiles_m - 1 && tile_coord_n == 0) {
-      int padded_sf_cols = params_ptr->n_col_blocks * 4;
       int logical_sf_cols = params_ptr->groups_per_row * sf_cols_per_group;
       int logical_sf_rows = int(M) / params_ptr->groups_per_row;
       uint8_t* sf_ptr = reinterpret_cast<uint8_t*>(ptr_scale_factor);
-      constexpr int StoreThreadCount = 128;
-      for (int i = args.thread_idx;
-           i < params_ptr->padded_sf_elems; i += StoreThreadCount) {
-        int dr = i / padded_sf_cols;
-        int dc = i % padded_sf_cols;
-        if (dr >= logical_sf_rows || dc >= logical_sf_cols) {
-          int off = (dr / 128) * params_ptr->n_col_blocks * 512
-                  + (dc / 4) * 512
-                  + (dr % 32) * 16
-                  + ((dr % 128) / 32) * 4
-                  + dc % 4;
-          sf_ptr[off] = 0;
-        }
+      detail::zero_blocked_sf_row_padding(
+          sf_ptr,
+          params_ptr->n_col_blocks,
+          logical_sf_rows,
+          args.thread_idx);
+      if (logical_sf_cols != params_ptr->n_col_blocks * 4) {
+        detail::zero_blocked_sf_column_padding(
+            sf_ptr,
+            params_ptr->n_col_blocks,
+            logical_sf_rows,
+            logical_sf_cols,
+            args.thread_idx);
       }
     }
 
@@ -780,23 +848,21 @@ struct Sm100BlockScaleFactorRowStoreNv {
     int cta_m = size<0>(args.tile_shape_mnk);
     int num_tiles_m = (int(M) + cta_m - 1) / cta_m;
     if (tile_coord_m == num_tiles_m - 1 && tile_coord_n == 0) {
-      int padded_sf_cols = params_ptr->n_col_blocks * 4;
       int logical_sf_cols = params_ptr->groups_per_row * sf_cols_per_group;
       int logical_sf_rows = int(M) / params_ptr->groups_per_row;
       uint8_t* sf_ptr = reinterpret_cast<uint8_t*>(ptr_scale_factor);
-      constexpr int StoreThreadCount = 128;
-      for (int i = args.thread_idx;
-           i < params_ptr->padded_sf_elems; i += StoreThreadCount) {
-        int dr = i / padded_sf_cols;
-        int dc = i % padded_sf_cols;
-        if (dr >= logical_sf_rows || dc >= logical_sf_cols) {
-          int off = (dr / 128) * params_ptr->n_col_blocks * 512
-                  + (dc / 4) * 512
-                  + (dr % 32) * 16
-                  + ((dr % 128) / 32) * 4
-                  + dc % 4;
-          sf_ptr[off] = 0;
-        }
+      detail::zero_blocked_sf_row_padding(
+          sf_ptr,
+          params_ptr->n_col_blocks,
+          logical_sf_rows,
+          args.thread_idx);
+      if (logical_sf_cols != params_ptr->n_col_blocks * 4) {
+        detail::zero_blocked_sf_column_padding(
+            sf_ptr,
+            params_ptr->n_col_blocks,
+            logical_sf_rows,
+            logical_sf_cols,
+            args.thread_idx);
       }
     }
 

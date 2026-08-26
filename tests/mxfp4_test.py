@@ -132,7 +132,11 @@ def _unpack_mask(clip_mask: torch.Tensor) -> torch.Tensor:
 
 
 def _forward_quantize_ref(
-    x: torch.Tensor, h: torch.Tensor, rot_size: int, quest: bool = True
+    x: torch.Tensor,
+    h: torch.Tensor,
+    rot_size: int,
+    quest: bool = True,
+    global_scale: float = 3.0,
 ):
     device = x.device
     xh_ref64 = (
@@ -157,7 +161,7 @@ def _forward_quantize_ref(
         xh_ref64.unflatten(dim=-1, sizes=(-1, 32)) / scales_ref64[..., None]
     ).flatten(start_dim=-2)
     if not quest:
-        xh_scaled_ref64 *= 3
+        xh_scaled_ref64 *= global_scale
 
     clip_mask_unpacked_ref = xh_scaled_ref64.abs() < 6.0
     clip_mask_ref = torch.zeros(
@@ -168,7 +172,9 @@ def _forward_quantize_ref(
 
     xh_fp4_ref, xh_e2m1_ref = _rtne_fp4(xh_scaled_ref64)
     xh_dq, xh_fp4_dq, scales_dq = _dq_fp4(
-        xh_e2m1_ref, xh_e8m0_ref, alpha=1.0 if quest else 3.0
+        xh_e2m1_ref,
+        xh_e8m0_ref,
+        alpha=1.0 if quest else global_scale,
     )
     clip_mask_unpacked_dq = _unpack_mask(clip_mask_ref)
 
@@ -302,9 +308,8 @@ def test_llama_shapes(model: str, layer_idx: int, batch: int, had_size: int, bac
 def test_sf_swizzled_layout_fusion(rot_size: int):
     """Verify kernel-blocked sf == to_blocked(reference_row_major_sf).
 
-    SM80/SM120 kernels write blocked directly via the n_col_blocks address
-    formula. The SM100 kernel writes kernel-level blocked via SfKMajorAtom;
-    Python converts to data-level blocked in fusedQuantizeMx.
+    SM80/SM120 kernels use an explicit blocked address formula. The SM100
+    epilogue maps its native SfKMajorAtom coordinates to the same data layout.
 
     Uses direct scale tensor comparison (not GEMM outputs) to avoid
     differences from FP4 quantization implementation details.
@@ -312,23 +317,86 @@ def test_sf_swizzled_layout_fusion(rot_size: int):
     dtype, device = DTYPE, DEVICE
     h = get_hadamard_matrix(rot_size, dtype, device)
 
-    # k = rot_size * 4 → cols_per_row = N_sf → no padding gap between groups
-    k = rot_size * 4
-
     for method in ["quest", "abs_max"]:
+        for groups_per_row in [1, 3, 4]:
+            k = rot_size * groups_per_row
+            for rows in [1, 128, 129]:
+                a = torch.randn(rows, k, dtype=dtype, device=device) * 10.0
 
-        a = torch.randn(16, k, dtype=dtype, device=device) * 10.0
+                # Kernel blocked output (flat 1-D)
+                _, sf_kernel_flat = fusedQuantizeMx(a, h, method=method)
 
-        # Kernel blocked output (flat 1-D)
-        _, sf_kernel_flat = fusedQuantizeMx(a, h, method=method,
-                                            is_sf_swizzled_layout=True)
+                # Reference: independently compute row-major sf → apply to_blocked
+                _, _, (_, sf_ref_rm, _) = _forward_quantize_ref(
+                    a, h, rot_size, quest=(method == "quest"))
+                sf_ref_blocked = to_blocked(sf_ref_rm, use_triton_kernel=True)
 
-        # Reference: independently compute row-major sf → apply to_blocked
-        _, _, (_, sf_ref_rm, _) = _forward_quantize_ref(
-            a, h, rot_size, quest=(method == "quest"))
-        sf_ref_blocked = to_blocked(sf_ref_rm, use_triton_kernel=True)
+                assert sf_kernel_flat.view(torch.uint8).equal(
+                    sf_ref_blocked.view(torch.uint8)
+                ), (
+                    f"kernel blocked sf != to_blocked(reference sf) for "
+                    f"method={method!r}, rot_size={rot_size}, rows={rows}, "
+                    f"groups_per_row={groups_per_row}"
+                )
 
-        assert sf_kernel_flat.view(torch.uint8).equal(sf_ref_blocked.view(torch.uint8)), (
-            f"kernel blocked sf != to_blocked(reference sf) "
-            f"for method={method!r}, rot_size={rot_size}"
-        )
+
+@pytest.mark.parametrize("global_scale_value", [1.0, 2.0, 3.0, 6.0])
+@torch.inference_mode()
+def test_absmax_global_scale(global_scale_value: float):
+    """Exercise the SM100 global-scale input against an independent reference."""
+    rot_size = 128
+    h = get_hadamard_matrix(rot_size, DTYPE, DEVICE)
+    a = torch.randn(129, rot_size * 4, dtype=DTYPE, device=DEVICE) * 10.0
+    global_scale = torch.tensor([global_scale_value], device=DEVICE)
+
+    fp4, sf = fusedQuantizeMx(
+        a, h, method="abs_max", global_scale=global_scale
+    )
+    _, _, (fp4_ref, sf_ref_rm, _) = _forward_quantize_ref(
+        a,
+        h,
+        rot_size,
+        quest=False,
+        global_scale=global_scale_value,
+    )
+    sf_ref_blocked = to_blocked(sf_ref_rm, use_triton_kernel=True)
+
+    assert sf.view(torch.uint8).equal(sf_ref_blocked.view(torch.uint8))
+    mismatch = (fp4.view(torch.uint8) != fp4_ref.view(torch.uint8)).float().mean()
+    assert mismatch <= 1e-4
+
+
+@torch.inference_mode()
+def test_quest_mask_uses_general_blocked_layout():
+    """Cover multiple SF column blocks and the 128-row padding boundary."""
+    rot_size = 32
+    h = get_hadamard_matrix(rot_size, DTYPE, DEVICE)
+    a = torch.randn(129, 512, dtype=DTYPE, device=DEVICE) * 10.0
+
+    fp4, sf, mask = fusedQuantizeMx(a, h, method="quest", return_mask=True)
+    _, _, (fp4_ref, sf_ref_rm, mask_ref) = _forward_quantize_ref(
+        a, h, rot_size, quest=True
+    )
+    sf_ref_blocked = to_blocked(sf_ref_rm, use_triton_kernel=True)
+
+    assert sf.view(torch.uint8).equal(sf_ref_blocked.view(torch.uint8))
+    assert mask.equal(mask_ref)
+    mismatch = (fp4.view(torch.uint8) != fp4_ref.view(torch.uint8)).float().mean()
+    assert mismatch <= 1e-4
+
+
+@torch.inference_mode()
+def test_row_major_sf_request_is_rejected():
+    h = get_hadamard_matrix(32, DTYPE, DEVICE)
+    a = torch.randn(1, 128, dtype=DTYPE, device=DEVICE)
+    with pytest.raises(ValueError, match="row-major scale-factor"):
+        fusedQuantizeMx(a, h, is_sf_swizzled_layout=False)
+
+
+@torch.inference_mode()
+def test_quest_rejects_global_scale():
+    h = get_hadamard_matrix(32, DTYPE, DEVICE)
+    a = torch.randn(1, 128, dtype=DTYPE, device=DEVICE)
+    global_scale = torch.tensor([3.0], device=DEVICE)
+    with pytest.raises(ValueError, match="only supported for method 'abs_max'"):
+        fusedQuantizeMx(a, h, method="quest", global_scale=global_scale)

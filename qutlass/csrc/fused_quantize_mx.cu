@@ -75,7 +75,8 @@ struct GemmRunner {
     int32_t M, int32_t N, int32_t K,
     torch::stable::Device device,
     float* global_scale = nullptr,
-    int n_col_blocks = 1)
+    int n_col_blocks = 1,
+    int logical_sf_cols = 1)
   {
 
     using GemmCoord = cutlass::gemm::GemmCoord;
@@ -92,6 +93,7 @@ struct GemmRunner {
       {static_cast<cutlass::float_ue8m0_t*>(out_sf.mutable_data_ptr()), M},
         global_scale,
         n_col_blocks,
+        logical_sf_cols,
         (int)out_sf.numel(),
         cutlass::bfloat16_t(0) //TODO (later): float
     };
@@ -125,7 +127,7 @@ void fusedQuantizeMxQuest_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 32>> runGemm;
   runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
-                            nullptr, D_sf.size(1) / 4);
+                            nullptr, D_sf.size(1) / 4, A.size(-1) / 32);
 }
 
 void fusedQuantizeMxAbsMax_host(torch::stable::Tensor& D,
@@ -146,7 +148,7 @@ void fusedQuantizeMxAbsMax_host(torch::stable::Tensor& D,
   int n_col_blocks = D_sf.size(1) / 4;
   runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
                             static_cast<float*>(const_cast<void*>(global_scale.const_data_ptr())),
-                            n_col_blocks);
+                            n_col_blocks, A.size(-1) / 32);
 }
 
 void fusedQuantizeMxQuestHad64_host(torch::stable::Tensor& D,
@@ -164,7 +166,7 @@ void fusedQuantizeMxQuestHad64_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 64>> runGemm;
   runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
-                            nullptr, D_sf.size(1) / 4);
+                            nullptr, D_sf.size(1) / 4, A.size(-1) / 32);
 }
 
 void fusedQuantizeMxAbsMaxHad64_host(torch::stable::Tensor& D,
@@ -185,7 +187,7 @@ void fusedQuantizeMxAbsMaxHad64_host(torch::stable::Tensor& D,
   int n_col_blocks = D_sf.size(1) / 4;
   runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
                             static_cast<float*>(const_cast<void*>(global_scale.const_data_ptr())),
-                            n_col_blocks);
+                            n_col_blocks, A.size(-1) / 32);
 }
 
 void fusedQuantizeMxQuestHad128_host(torch::stable::Tensor& D,
@@ -203,7 +205,7 @@ void fusedQuantizeMxQuestHad128_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 128>> runGemm;
   runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
-                            nullptr, D_sf.size(1) / 4);
+                            nullptr, D_sf.size(1) / 4, A.size(-1) / 32);
 }
 
 void fusedQuantizeMxAbsMaxHad128_host(torch::stable::Tensor& D,
@@ -224,7 +226,7 @@ void fusedQuantizeMxAbsMaxHad128_host(torch::stable::Tensor& D,
   int n_col_blocks = D_sf.size(1) / 4;
   runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
                             static_cast<float*>(const_cast<void*>(global_scale.const_data_ptr())),
-                            n_col_blocks);
+                            n_col_blocks, A.size(-1) / 32);
 }
 
 } // namespace QUTLASS

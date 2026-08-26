@@ -89,6 +89,7 @@ struct GemmQuantMx {
     cutlass::TensorRef<cutlass::float_ue8m0_t, layout::RowMajor> ref_D_sf;
     typename Epilogue::ElementAccumulator* global_scale;
     int n_col_blocks;
+    int logical_sf_cols;
     int padded_sf_elems;
     typename OutputOp::Params output_op;
     int *semaphore;
@@ -103,7 +104,7 @@ struct GemmQuantMx {
     //
 
     CUTLASS_HOST_DEVICE
-    Params() : swizzle_log_tile(0), semaphore(0), gemm_k_size(0), global_scale(nullptr), n_col_blocks(1), padded_sf_elems(0) {}
+    Params() : swizzle_log_tile(0), semaphore(0), gemm_k_size(0), global_scale(nullptr), n_col_blocks(1), logical_sf_cols(1), padded_sf_elems(0) {}
 
     CUTLASS_HOST_DEVICE
     Params(cutlass::gemm::GemmCoord const &problem_size,
@@ -115,6 +116,7 @@ struct GemmQuantMx {
            cutlass::TensorRef<cutlass::float_ue8m0_t, layout::RowMajor> ref_D_sf,
            typename Epilogue::ElementAccumulator* global_scale_ = nullptr,
            int n_col_blocks_ = 1,
+           int logical_sf_cols_ = 1,
            int padded_sf_elems_ = 0,
            typename OutputOp::Params output_op = typename OutputOp::Params(),
            int *workspace = nullptr,
@@ -136,6 +138,7 @@ struct GemmQuantMx {
           ref_D_sf(ref_D_sf),
           global_scale(global_scale_),
           n_col_blocks(n_col_blocks_),
+          logical_sf_cols(logical_sf_cols_),
           padded_sf_elems(padded_sf_elems_),
           output_op(output_op),
           gather_A_indices(gather_A_indices),
@@ -355,7 +358,7 @@ struct GemmQuantMx {
     }
 
     // Execute the epilogue operator to update the destination tensor.
-    epilogue(output_op, iterator_D, accumulators, iterator_C, params.ref_D.data(), params.ref_D_sf.data(), params.problem_size.m(), params.global_scale, params.n_col_blocks, params.padded_sf_elems);
+    epilogue(output_op, iterator_D, accumulators, iterator_C, params.ref_D.data(), params.ref_D_sf.data(), params.problem_size.m(), params.global_scale, params.n_col_blocks, params.logical_sf_cols, params.padded_sf_elems);
 
     //
     // Release the semaphore
@@ -410,6 +413,9 @@ struct GemmQuantMxMask {
     cutlass::TensorRef<cutlass::float_ue8m0_t, layout::RowMajor> ref_D_sf;
     typename Epilogue::OutputTileIterator::Params params_mask;
     cutlass::TensorRef<uint8_t, layout::RowMajor> ref_mask;
+    int n_col_blocks;
+    int logical_sf_cols;
+    int padded_sf_elems;
     typename OutputOp::Params output_op;
     int *semaphore;
     int gemm_k_size;
@@ -423,7 +429,13 @@ struct GemmQuantMxMask {
     //
 
     CUTLASS_HOST_DEVICE
-    Params() : swizzle_log_tile(0), semaphore(0), gemm_k_size(0) {}
+    Params()
+        : swizzle_log_tile(0),
+          semaphore(0),
+          gemm_k_size(0),
+          n_col_blocks(1),
+          logical_sf_cols(1),
+          padded_sf_elems(0) {}
 
     CUTLASS_HOST_DEVICE
     Params(cutlass::gemm::GemmCoord const &problem_size,
@@ -434,6 +446,9 @@ struct GemmQuantMxMask {
            typename Epilogue::OutputTileIterator::TensorRef ref_D,
            cutlass::TensorRef<cutlass::float_ue8m0_t, layout::RowMajor> ref_D_sf,
            cutlass::TensorRef<uint8_t, layout::RowMajor> ref_mask,
+           int n_col_blocks_ = 1,
+           int logical_sf_cols_ = 1,
+           int padded_sf_elems_ = 0,
            typename OutputOp::Params output_op = typename OutputOp::Params(),
            int *workspace = nullptr,
            int const *gather_A_indices = nullptr,
@@ -454,6 +469,9 @@ struct GemmQuantMxMask {
           ref_D_sf(ref_D_sf),
           params_mask(ref_mask.layout()),
           ref_mask(ref_mask),
+          n_col_blocks(n_col_blocks_),
+          logical_sf_cols(logical_sf_cols_),
+          padded_sf_elems(padded_sf_elems_),
           output_op(output_op),
           gather_A_indices(gather_A_indices),
           gather_B_indices(gather_B_indices),
@@ -677,7 +695,7 @@ struct GemmQuantMxMask {
     }
 
     // Execute the epilogue operator to update the destination tensor.
-    epilogue(output_op, iterator_D, accumulators, iterator_C, params.ref_D.data(), params.ref_D_sf.data(), params.problem_size.m(), params.ref_mask.data() /* iterator_row_vec,
+    epilogue(output_op, iterator_D, accumulators, iterator_C, params.ref_D.data(), params.ref_D_sf.data(), params.problem_size.m(), params.ref_mask.data(), params.n_col_blocks, params.logical_sf_cols, params.padded_sf_elems /* iterator_row_vec,
              iterator_col_vec, iterator_vec_a_add, iterator_vec_b_add */ ); //TODO: just pass params.ref_D.data()
                                                                             //TODO: and SF_D.data()
 
@@ -734,6 +752,7 @@ struct GemmQuantNv {
     cutlass::TensorRef<cutlass::float_ue4m3_t, layout::RowMajor> ref_D_sf;
     typename Epilogue::ElementAccumulator* global_scale;
     int n_col_blocks;
+    int logical_sf_cols;
     int padded_sf_elems;
     typename OutputOp::Params output_op;
     int *semaphore;
@@ -748,7 +767,7 @@ struct GemmQuantNv {
     //
 
     CUTLASS_HOST_DEVICE
-    Params() : swizzle_log_tile(0), semaphore(0), gemm_k_size(0), n_col_blocks(1), padded_sf_elems(0) {}
+    Params() : swizzle_log_tile(0), semaphore(0), gemm_k_size(0), n_col_blocks(1), logical_sf_cols(1), padded_sf_elems(0) {}
 
     CUTLASS_HOST_DEVICE
     Params(cutlass::gemm::GemmCoord const &problem_size,
@@ -760,6 +779,7 @@ struct GemmQuantNv {
            cutlass::TensorRef<cutlass::float_ue4m3_t, layout::RowMajor> ref_D_sf,
            typename Epilogue::ElementAccumulator* global_scale,
            int n_col_blocks_ = 1,
+           int logical_sf_cols_ = 1,
            int padded_sf_elems_ = 0,
            typename OutputOp::Params output_op = typename OutputOp::Params(),
            int *workspace = nullptr,
@@ -781,6 +801,7 @@ struct GemmQuantNv {
           ref_D_sf(ref_D_sf),
           global_scale(global_scale),
           n_col_blocks(n_col_blocks_),
+          logical_sf_cols(logical_sf_cols_),
           padded_sf_elems(padded_sf_elems_),
           output_op(output_op),
           gather_A_indices(gather_A_indices),
@@ -1000,7 +1021,7 @@ struct GemmQuantNv {
     }
 
     // Execute the epilogue operator to update the destination tensor.
-    epilogue(output_op, iterator_D, accumulators, iterator_C, params.ref_D.data(), params.ref_D_sf.data(), params.global_scale, params.problem_size.m(), params.n_col_blocks, params.padded_sf_elems);
+    epilogue(output_op, iterator_D, accumulators, iterator_C, params.ref_D.data(), params.ref_D_sf.data(), params.global_scale, params.problem_size.m(), params.n_col_blocks, params.logical_sf_cols, params.padded_sf_elems);
 
     //
     // Release the semaphore

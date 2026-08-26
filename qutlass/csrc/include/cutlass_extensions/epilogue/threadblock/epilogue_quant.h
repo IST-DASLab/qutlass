@@ -136,6 +136,33 @@ static float reciprocal_approximate_ftz(float a) {
   return b;
 }
 
+CUTLASS_DEVICE
+static void zero_blocked_sf_padding(
+    uint8_t* sf_ptr,
+    int padded_sf_elems,
+    int n_col_blocks,
+    int logical_sf_cols,
+    int logical_sf_elems) {
+  if (padded_sf_elems <= 0 || blockIdx.x != gridDim.x - 1) {
+    return;
+  }
+
+  int padded_sf_cols = n_col_blocks * 4;
+  int logical_sf_rows = logical_sf_elems / logical_sf_cols;
+  for (int flat = threadIdx.x; flat < padded_sf_elems; flat += blockDim.x) {
+    int sf_row = flat / padded_sf_cols;
+    int sf_col = flat % padded_sf_cols;
+    if (sf_row >= logical_sf_rows || sf_col >= logical_sf_cols) {
+      int offset = (sf_row / 128) * (n_col_blocks * 512)
+                 + (sf_col / 4) * 512
+                 + (sf_row % 32) * 16
+                 + ((sf_row % 128) / 32) * 4
+                 + sf_col % 4;
+      sf_ptr[offset] = 0;
+    }
+  }
+}
+
 /// Epilogue operator
 template <typename Shape_,  ///< Shape of threadblock tile (concept: GemmShape)
           typename WarpMmaOperator_,  ///< Warp-level MMA operator (concept:
@@ -354,13 +381,15 @@ class EpilogueQuantMx
       int problem_m_size,
       ElementAccumulator* global_scale = nullptr,
       int n_col_blocks = 1,
+      int logical_sf_cols = 1,
       int padded_sf_elems = 0
     ){
     static_assert(RotationSize==32 ||
                   RotationSize==64 || RotationSize==128,
                   "RotationSize must be 32/64/128");
     operator()(output_op, destination_iterator, accumulators,
-               SourceAspectNeeded(source_iterator), D, D_sf, problem_m_size, global_scale, n_col_blocks, padded_sf_elems);
+               SourceAspectNeeded(source_iterator), D, D_sf, problem_m_size,
+               global_scale, n_col_blocks, logical_sf_cols, padded_sf_elems);
   }
 
   /// Perform the epilogue computations and stream the result to global memory.
@@ -428,13 +457,15 @@ class EpilogueQuantMx
       int problem_m_size,
       ElementAccumulator* global_scale = nullptr,
       int n_col_blocks = 1,
+      int logical_sf_cols = 1,
       int padded_sf_elems = 0) {
     static_assert(RotationSize==32 ||
                   RotationSize==64 || RotationSize==128,
                   "RotationSize must be 32/64/128");
     EpilogueOpImpl<RotationSize, EpilogueQuantMx>::run(
       *this, output_op, destination_iterator, accumulators,
-      source, D, D_sf, problem_m_size, global_scale, n_col_blocks, padded_sf_elems);
+      source, D, D_sf, problem_m_size, global_scale, n_col_blocks,
+      logical_sf_cols, padded_sf_elems);
   }
 
 private:
@@ -474,6 +505,7 @@ private:
              int problem_m_size,
              ElementAccumulator* global_scale = nullptr,
              int n_col_blocks = 1,
+             int logical_sf_cols = 1,
              int padded_sf_elems = 0)
   {
     // Iterator over warp-level accumulator fragment
@@ -516,7 +548,7 @@ private:
 
         float4 *result_ptr  = ((float4 *)D + row); //4=32/8
         // General blocked address: flat idx = row, n_col_blocks from caller
-        { int _nc = n_col_blocks * 4, _r2 = row / _nc, _c2 = row % _nc;
+        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
         uint8_t *x_e8m0_ptr = ((uint8_t *)D_sf
             + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
             + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
@@ -584,26 +616,11 @@ private:
             }
 
             *((float4*)result_ptr) = *((float4*)result_reg);
-        } else if((threadIdx.x%4)==0) {
-            x_e8m0_ptr[0] = 0;
         }
         } // close n_col_blocks scope
     }
-    // Inline zero-init: last CTA cooperatively zeros SF padding beyond tile coverage
-    if (padded_sf_elems > 0 && blockIdx.x == gridDim.x - 1) {
-      int covered = gridDim.x * blockDim.x * 1;
-      int gap = padded_sf_elems - covered;
-      if (gap > 0) {
-        uint8_t* sf_ptr = (uint8_t*)D_sf;
-        int data_cols = n_col_blocks * 4;
-        for (int i = threadIdx.x; i < gap; i += blockDim.x) {
-          int fi = covered + i;
-          int _r2 = fi / data_cols, _c2 = fi % data_cols;
-          int off = (_r2/128)*(n_col_blocks*512) + (_c2/4)*512 + (_r2%32)*16 + ((_r2%128)/32)*4 + _c2%4;
-          sf_ptr[off] = 0;
-        }
-      }
-    }
+    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                            n_col_blocks, logical_sf_cols, problem_m_size);
   }
 
   template <typename SourceAspect>
@@ -617,6 +634,7 @@ private:
              int problem_m_size,
              ElementAccumulator* global_scale = nullptr,
              int n_col_blocks = 1,
+             int logical_sf_cols = 1,
              int padded_sf_elems = 0)
   {
     // Iterator over warp-level accumulator fragment
@@ -659,7 +677,7 @@ private:
 
         float4 *result_ptr  = ((float4 *)D + row); //4=32/8
         // row encodes flat scale index; general blocked formula
-        { int _nc = n_col_blocks * 4, _r2 = row / _nc, _c2 = row % _nc;
+        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
         uint8_t *x_e8m0_ptr = ((uint8_t *)D_sf
             + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
             + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
@@ -727,26 +745,11 @@ private:
             }
 
             *((float4*)result_ptr) = *((float4*)result_reg);
-        } else if((threadIdx.x%4)<2) {
-            x_e8m0_ptr[0] = 0;
         }
         } // close n_col_blocks scope
     }
-    // Inline zero-init: last CTA cooperatively zeros SF padding beyond tile coverage
-    if (padded_sf_elems > 0 && blockIdx.x == gridDim.x - 1) {
-      int covered = gridDim.x * blockDim.x * 2;
-      int gap = padded_sf_elems - covered;
-      if (gap > 0) {
-        uint8_t* sf_ptr = (uint8_t*)D_sf;
-        int data_cols = n_col_blocks * 4;
-        for (int i = threadIdx.x; i < gap; i += blockDim.x) {
-          int fi = covered + i;
-          int _r2 = fi / data_cols, _c2 = fi % data_cols;
-          int off = (_r2/128)*(n_col_blocks*512) + (_c2/4)*512 + (_r2%32)*16 + ((_r2%128)/32)*4 + _c2%4;
-          sf_ptr[off] = 0;
-        }
-      }
-    }
+    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                            n_col_blocks, logical_sf_cols, problem_m_size * 2);
   }
 
   template <typename SourceAspect>
@@ -760,6 +763,7 @@ private:
              int problem_m_size,
              ElementAccumulator* global_scale = nullptr,
              int n_col_blocks = 1,
+             int logical_sf_cols = 1,
              int padded_sf_elems = 0)
   {
     // Iterator over warp-level accumulator fragment
@@ -803,8 +807,8 @@ private:
         float4 *result_ptr  = ((float4 *)D + row*4 + (threadIdx.x%32)%4); //4=32/8
         // General blocked address: flat idx = row*4+col, n_col_blocks from caller
         int _col128 = (threadIdx.x % 32) % 4;
-        { int _fi = row * 4 + _col128, _nc = n_col_blocks * 4;
-          int _r2 = _fi / _nc, _c2 = _fi % _nc;
+        { int _fi = row * 4 + _col128;
+          int _r2 = _fi / logical_sf_cols, _c2 = _fi % logical_sf_cols;
         uint8_t *x_e8m0_ptr = ((uint8_t *)D_sf
             + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
             + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
@@ -872,26 +876,11 @@ private:
             }
 
             *((float4*)result_ptr) = *((float4*)result_reg);
-        } else {
-            x_e8m0_ptr[0] = 0;
         }
         } // close n_col_blocks scope
     }
-    // Inline zero-init: last CTA cooperatively zeros SF padding beyond tile coverage
-    if (padded_sf_elems > 0 && blockIdx.x == gridDim.x - 1) {
-      int covered = gridDim.x * blockDim.x * 4;
-      int gap = padded_sf_elems - covered;
-      if (gap > 0) {
-        uint8_t* sf_ptr = (uint8_t*)D_sf;
-        int data_cols = n_col_blocks * 4;
-        for (int i = threadIdx.x; i < gap; i += blockDim.x) {
-          int fi = covered + i;
-          int _r2 = fi / data_cols, _c2 = fi % data_cols;
-          int off = (_r2/128)*(n_col_blocks*512) + (_c2/4)*512 + (_r2%32)*16 + ((_r2%128)/32)*4 + _c2%4;
-          sf_ptr[off] = 0;
-        }
-      }
-    }
+    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                            n_col_blocks, logical_sf_cols, problem_m_size * 4);
   }
 
 };
@@ -1109,10 +1098,14 @@ class EpilogueQuantMxMask
       cutlass::float_e2m1_t* D,
       cutlass::float_ue8m0_t* D_sf,
       int problem_m_size,
-      uint8_t* D_mask
+      uint8_t* D_mask,
+      int n_col_blocks = 1,
+      int logical_sf_cols = 1,
+      int padded_sf_elems = 0
     ){
     operator()(output_op, destination_iterator, accumulators,
-               SourceAspectNeeded(source_iterator), D, D_sf, problem_m_size, D_mask);
+               SourceAspectNeeded(source_iterator), D, D_sf, problem_m_size,
+               D_mask, n_col_blocks, logical_sf_cols, padded_sf_elems);
   }
 
   /// Perform the epilogue computations and stream the result to global memory.
@@ -1178,7 +1171,10 @@ class EpilogueQuantMxMask
       cutlass::float_e2m1_t* D,
       cutlass::float_ue8m0_t* D_sf,
       int problem_m_size,
-      uint8_t* D_mask) {
+      uint8_t* D_mask,
+      int n_col_blocks = 1,
+      int logical_sf_cols = 1,
+      int padded_sf_elems = 0) {
     // Iterator over warp-level accumulator fragment
     AccumulatorFragmentIterator accum_fragment_iterator(accumulators);
 
@@ -1219,8 +1215,14 @@ class EpilogueQuantMxMask
         int row = iter*(32/4) + ((threadIdx.x%32)/4) + (threadIdx.x/32)*(32/4)*OutputTileIterator::kIterations + blockIdx.x*blockDim.x;
 
         float4 *result_ptr  = ((float4 *)D + row); //4=32/8
-        uint8_t *x_e8m0_ptr = ((uint8_t *)D_sf
-            + (row / 128) * 512 + (row % 32) * 16 + ((row % 128) / 32) * 4);
+        int sf_row = row / logical_sf_cols;
+        int sf_col = row % logical_sf_cols;
+        uint8_t *x_e8m0_ptr = reinterpret_cast<uint8_t *>(D_sf)
+            + (sf_row / 128) * (n_col_blocks * 512)
+            + (sf_col / 4) * 512
+            + (sf_row % 32) * 16
+            + ((sf_row % 128) / 32) * 4
+            + sf_col % 4;
 
         if((threadIdx.x%4)==0 && row<problem_m_size){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*10);// + iter*(blockDim.x/4)*32); 40=32+8
@@ -1311,6 +1313,9 @@ class EpilogueQuantMxMask
       //}
         //++destination_iterator;
     }
+
+    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                            n_col_blocks, logical_sf_cols, problem_m_size);
   }
 };
 
@@ -1532,10 +1537,12 @@ class EpilogueQuantNv
       ElementAccumulator* global_scale,
       int problem_m_size,
       int n_col_blocks = 1,
+      int logical_sf_cols = 1,
       int padded_sf_elems = 0
     ){
     operator()(output_op, destination_iterator, accumulators,
-               SourceAspectNeeded(source_iterator), D, D_sf, global_scale, problem_m_size, n_col_blocks, padded_sf_elems);
+               SourceAspectNeeded(source_iterator), D, D_sf, global_scale,
+               problem_m_size, n_col_blocks, logical_sf_cols, padded_sf_elems);
   }
 
   /// Perform the epilogue computations and stream the result to global memory.
@@ -1603,13 +1610,15 @@ class EpilogueQuantNv
       ElementAccumulator* global_scale,
       int problem_m_size,
       int n_col_blocks = 1,
+      int logical_sf_cols = 1,
       int padded_sf_elems = 0) {
     static_assert(RotationSize==16 || RotationSize==32 ||
                   RotationSize==64 || RotationSize==128,
                   "RotationSize must be 16/32/64/128");
     EpilogueOpImpl<RotationSize, EpilogueQuantNv>::run(
       *this, output_op, destination_iterator, accumulators,
-      source, D, D_sf, global_scale, problem_m_size, n_col_blocks, padded_sf_elems);
+      source, D, D_sf, global_scale, problem_m_size, n_col_blocks,
+      logical_sf_cols, padded_sf_elems);
   }
 
 private:
@@ -1656,6 +1665,7 @@ private:
              ElementAccumulator* global_scale,
              int problem_m_size,
              int n_col_blocks = 1,
+             int logical_sf_cols = 1,
              int padded_sf_elems = 0)
   {
     // Iterator over warp-level accumulator fragment
@@ -1698,7 +1708,7 @@ private:
 
         float2 *result_ptr  = ((float2 *)D + row); //4=32/8
         // Blocked address for scale factor (same formula as MX op_32)
-        { int _nc = n_col_blocks * 4, _r2 = row / _nc, _c2 = row % _nc;
+        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
         uint8_t *x_e4m3_ptr = ((uint8_t *)D_sf
             + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
             + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
@@ -1787,26 +1797,11 @@ private:
             }
 
             *((float2*)result_ptr) = *((float2*)result_reg);
-        } else if((threadIdx.x%4)==0) {
-            *x_e4m3_ptr = 0;
         }
         } // close n_col_blocks scope
     }
-    // Inline zero-init: last CTA cooperatively zeros SF padding beyond tile coverage
-    if (padded_sf_elems > 0 && blockIdx.x == gridDim.x - 1) {
-      int covered = gridDim.x * blockDim.x * 1;
-      int gap = padded_sf_elems - covered;
-      if (gap > 0) {
-        uint8_t* sf_ptr = (uint8_t*)D_sf;
-        int data_cols = n_col_blocks * 4;
-        for (int i = threadIdx.x; i < gap; i += blockDim.x) {
-          int fi = covered + i;
-          int _r2 = fi / data_cols, _c2 = fi % data_cols;
-          int off = (_r2/128)*(n_col_blocks*512) + (_c2/4)*512 + (_r2%32)*16 + ((_r2%128)/32)*4 + _c2%4;
-          sf_ptr[off] = 0;
-        }
-      }
-    }
+    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                            n_col_blocks, logical_sf_cols, problem_m_size);
   }
 
   template <typename SourceAspect>
@@ -1820,6 +1815,7 @@ private:
              ElementAccumulator* global_scale,
              int problem_m_size,
              int n_col_blocks = 1,
+             int logical_sf_cols = 1,
              int padded_sf_elems = 0)
   {
     // Iterator over warp-level accumulator fragment
@@ -1862,7 +1858,7 @@ private:
 
         float2 *result_ptr  = ((float2 *)D + row); //4=32/8
         // Blocked address for scale factor (same formula as MX op_32)
-        { int _nc = n_col_blocks * 4, _r2 = row / _nc, _c2 = row % _nc;
+        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
         uint8_t *x_e4m3_ptr = ((uint8_t *)D_sf
             + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
             + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
@@ -1951,26 +1947,11 @@ private:
             }
 
             *((float2*)result_ptr) = *((float2*)result_reg);
-        } else if((threadIdx.x%4)<2) {
-            *x_e4m3_ptr = 0;
         }
         } // close n_col_blocks scope
     }
-    // Inline zero-init: last CTA cooperatively zeros SF padding beyond tile coverage
-    if (padded_sf_elems > 0 && blockIdx.x == gridDim.x - 1) {
-      int covered = gridDim.x * blockDim.x * 2;
-      int gap = padded_sf_elems - covered;
-      if (gap > 0) {
-        uint8_t* sf_ptr = (uint8_t*)D_sf;
-        int data_cols = n_col_blocks * 4;
-        for (int i = threadIdx.x; i < gap; i += blockDim.x) {
-          int fi = covered + i;
-          int _r2 = fi / data_cols, _c2 = fi % data_cols;
-          int off = (_r2/128)*(n_col_blocks*512) + (_c2/4)*512 + (_r2%32)*16 + ((_r2%128)/32)*4 + _c2%4;
-          sf_ptr[off] = 0;
-        }
-      }
-    }
+    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                            n_col_blocks, logical_sf_cols, problem_m_size * 2);
   }
 
   template <typename SourceAspect>
@@ -1984,6 +1965,7 @@ private:
              ElementAccumulator* global_scale,
              int problem_m_size,
              int n_col_blocks = 1,
+             int logical_sf_cols = 1,
              int padded_sf_elems = 0)
   {
      // Iterator over warp-level accumulator fragment
@@ -2026,7 +2008,7 @@ private:
 
         float2 *result_ptr  = ((float2 *)D + row); //4=32/8
         // Blocked address for scale factor (same formula as MX op_32)
-        { int _nc = n_col_blocks * 4, _r2 = row / _nc, _c2 = row % _nc;
+        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
         uint8_t *x_e4m3_ptr = ((uint8_t *)D_sf
             + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
             + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
@@ -2115,26 +2097,11 @@ private:
             }
 
             *((float2*)result_ptr) = *((float2*)result_reg);
-        } else {
-            *x_e4m3_ptr = 0;
         }
         } // close n_col_blocks scope
     }
-    // Inline zero-init: last CTA cooperatively zeros SF padding beyond tile coverage
-    if (padded_sf_elems > 0 && blockIdx.x == gridDim.x - 1) {
-      int covered = gridDim.x * blockDim.x * 4;
-      int gap = padded_sf_elems - covered;
-      if (gap > 0) {
-        uint8_t* sf_ptr = (uint8_t*)D_sf;
-        int data_cols = n_col_blocks * 4;
-        for (int i = threadIdx.x; i < gap; i += blockDim.x) {
-          int fi = covered + i;
-          int _r2 = fi / data_cols, _c2 = fi % data_cols;
-          int off = (_r2/128)*(n_col_blocks*512) + (_c2/4)*512 + (_r2%32)*16 + ((_r2%128)/32)*4 + _c2%4;
-          sf_ptr[off] = 0;
-        }
-      }
-    }
+    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                            n_col_blocks, logical_sf_cols, problem_m_size * 4);
   }
 
   template <typename SourceAspect>
@@ -2148,6 +2115,7 @@ private:
              ElementAccumulator* global_scale,
              int problem_m_size,
              int n_col_blocks = 1,
+             int logical_sf_cols = 1,
              int padded_sf_elems = 0)
   {
      // Iterator over warp-level accumulator fragment
@@ -2190,11 +2158,14 @@ private:
         int row = iter*(32/4)*4 + ((threadIdx.x%32)/4)*4 + (threadIdx.x%32)%4 + (threadIdx.x/32)*(32/4)*4*OutputTileIterator::kIterations + blockIdx.x*blockDim.x*4;
 
         float4 *result_ptr  = ((float4 *)D + row); //4=32/8
-        // Blocked address for NV scale factor (uint16_t = 2 bytes, each pair covers 16 elts)
-        { int _nc = n_col_blocks * 4, _r2 = row / _nc, _c2 = row % _nc;
-        uint16_t *x_e4m3_ptr = ((uint16_t *)D_sf
-            + ((_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
-            + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4) / 2);
+        // Each store contains two adjacent scale factors.
+        { int logical_sf_pairs = logical_sf_cols / 2;
+        int _r2 = row / logical_sf_pairs;
+        int _c2 = (row % logical_sf_pairs) * 2;
+        uint16_t *x_e4m3_ptr = reinterpret_cast<uint16_t *>(
+            reinterpret_cast<uint8_t *>(D_sf)
+            + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
+            + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
 
         if(row<problem_m_size*4){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*34 + (threadIdx.x%4)*8); // + iter*(blockDim.x/4)*32); 40=32+8
@@ -2284,26 +2255,11 @@ private:
 
             *((uint16_t*)x_e4m3_ptr) = *((uint16_t*)out_s);
             *((float4*)result_ptr) = *((float4*)result_reg);
-        } else {
-            *x_e4m3_ptr = 0;
         }
         } // close n_col_blocks scope
     }
-    // Inline zero-init: last CTA cooperatively zeros SF padding beyond tile coverage
-    if (padded_sf_elems > 0 && blockIdx.x == gridDim.x - 1) {
-      int covered = gridDim.x * blockDim.x * 8;
-      int gap = padded_sf_elems - covered;
-      if (gap > 0) {
-        uint8_t* sf_ptr = (uint8_t*)D_sf;
-        int data_cols = n_col_blocks * 4;
-        for (int i = threadIdx.x; i < gap; i += blockDim.x) {
-          int fi = covered + i;
-          int _r2 = fi / data_cols, _c2 = fi % data_cols;
-          int off = (_r2/128)*(n_col_blocks*512) + (_c2/4)*512 + (_r2%32)*16 + ((_r2%128)/32)*4 + _c2%4;
-          sf_ptr[off] = 0;
-        }
-      }
-    }
+    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                            n_col_blocks, logical_sf_cols, problem_m_size * 8);
   }
 
 };

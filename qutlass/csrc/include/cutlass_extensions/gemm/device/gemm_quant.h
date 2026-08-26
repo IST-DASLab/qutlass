@@ -195,6 +195,7 @@ class GemmQuantMx {
     TensorRef<cutlass::float_ue8m0_t, LayoutC> ref_D_sf;
     typename GemmKernel::Epilogue::ElementAccumulator* global_scale;
     int n_col_blocks;
+    int logical_sf_cols;
     int padded_sf_elems;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
@@ -209,7 +210,7 @@ class GemmQuantMx {
 
     /// Default ctor
     CUTLASS_HOST_DEVICE
-    Arguments() : problem_size(0, 0, 0), split_k_slices(1), global_scale(nullptr), n_col_blocks(1), padded_sf_elems(0) {}
+    Arguments() : problem_size(0, 0, 0), split_k_slices(1), global_scale(nullptr), n_col_blocks(1), logical_sf_cols(1), padded_sf_elems(0) {}
 
     /// Constructs an Arguments structure
     CUTLASS_HOST_DEVICE
@@ -221,6 +222,7 @@ class GemmQuantMx {
               TensorRef<cutlass::float_ue8m0_t, LayoutC> ref_D_sf_,
               typename GemmKernel::Epilogue::ElementAccumulator* global_scale_ = nullptr,
               int n_col_blocks_ = 1,
+              int logical_sf_cols_ = 1,
               int padded_sf_elems_ = 0,
               typename EpilogueOutputOp::Params epilogue_ =
                   typename EpilogueOutputOp::Params(),
@@ -236,6 +238,7 @@ class GemmQuantMx {
           ref_D_sf(ref_D_sf_),
           global_scale(global_scale_),
           n_col_blocks(n_col_blocks_),
+          logical_sf_cols(logical_sf_cols_),
           padded_sf_elems(padded_sf_elems_),
           epilogue(epilogue_),
           split_k_slices(split_k_slices),
@@ -332,6 +335,7 @@ class GemmQuantMx {
                                           args.ref_D_sf,
                                           args.global_scale,
                                           args.n_col_blocks,
+                                          args.logical_sf_cols,
                                           args.padded_sf_elems,
                                           args.epilogue,
                                           static_cast<int *>(workspace),
@@ -357,6 +361,7 @@ class GemmQuantMx {
     params_.ref_D_sf.reset(args.ref_D_sf.data());
     params_.global_scale = args.global_scale;
     params_.n_col_blocks = args.n_col_blocks;
+    params_.logical_sf_cols = args.logical_sf_cols;
     params_.padded_sf_elems = args.padded_sf_elems;
     params_.output_op = args.epilogue;
     params_.semaphore = static_cast<int *>(workspace);
@@ -544,6 +549,9 @@ class GemmQuantMxMask {
     TensorRef<ElementOut, LayoutOut> ref_D;
     TensorRef<cutlass::float_ue8m0_t, LayoutC> ref_D_sf;
     TensorRef<uint8_t, LayoutC> ref_mask;
+    int n_col_blocks;
+    int logical_sf_cols;
+    int padded_sf_elems;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
     // For gather+scatter operations
@@ -557,7 +565,12 @@ class GemmQuantMxMask {
 
     /// Default ctor
     CUTLASS_HOST_DEVICE
-    Arguments() : problem_size(0, 0, 0), split_k_slices(1) {}
+    Arguments()
+        : problem_size(0, 0, 0),
+          n_col_blocks(1),
+          logical_sf_cols(1),
+          padded_sf_elems(0),
+          split_k_slices(1) {}
 
     /// Constructs an Arguments structure
     CUTLASS_HOST_DEVICE
@@ -568,6 +581,9 @@ class GemmQuantMxMask {
               TensorRef<ElementOut, LayoutOut> ref_D_,
               TensorRef<cutlass::float_ue8m0_t, LayoutC> ref_D_sf_,
               TensorRef<uint8_t, LayoutC> ref_mask_,
+              int n_col_blocks_ = 1,
+              int logical_sf_cols_ = 1,
+              int padded_sf_elems_ = 0,
               typename EpilogueOutputOp::Params epilogue_ =
                   typename EpilogueOutputOp::Params(),
               int split_k_slices = 1,
@@ -581,6 +597,9 @@ class GemmQuantMxMask {
           ref_D(ref_D_),
           ref_D_sf(ref_D_sf_),
           ref_mask(ref_mask_),
+          n_col_blocks(n_col_blocks_),
+          logical_sf_cols(logical_sf_cols_),
+          padded_sf_elems(padded_sf_elems_),
           epilogue(epilogue_),
           split_k_slices(split_k_slices),
           gather_A_indices(gather_A_indices_),
@@ -675,6 +694,9 @@ class GemmQuantMxMask {
                                           args.ref_D,
                                           args.ref_D_sf,
                                           args.ref_mask,
+                                          args.n_col_blocks,
+                                          args.logical_sf_cols,
+                                          args.padded_sf_elems,
                                           args.epilogue,
                                           static_cast<int *>(workspace),
                                           args.gather_A_indices,
@@ -698,6 +720,9 @@ class GemmQuantMxMask {
     params_.ref_D.reset(args.ref_D.data());
     params_.ref_D_sf.reset(args.ref_D_sf.data());
     params_.ref_mask.reset(args.ref_mask.data());
+    params_.n_col_blocks = args.n_col_blocks;
+    params_.logical_sf_cols = args.logical_sf_cols;
+    params_.padded_sf_elems = args.padded_sf_elems;
     params_.output_op = args.epilogue;
     params_.semaphore = static_cast<int *>(workspace);
 
@@ -887,6 +912,7 @@ class GemmQuantNv {
     TensorRef<cutlass::float_ue4m3_t, LayoutC> ref_D_sf;
     ElementAccumulator_* global_scale;
     int n_col_blocks;
+    int logical_sf_cols;
     int padded_sf_elems;
     typename EpilogueOutputOp::Params epilogue;
     int split_k_slices;
@@ -901,7 +927,7 @@ class GemmQuantNv {
 
     /// Default ctor
     CUTLASS_HOST_DEVICE
-    Arguments() : problem_size(0, 0, 0), split_k_slices(1), n_col_blocks(1), padded_sf_elems(0) {}
+    Arguments() : problem_size(0, 0, 0), split_k_slices(1), n_col_blocks(1), logical_sf_cols(1), padded_sf_elems(0) {}
 
     /// Constructs an Arguments structure
     CUTLASS_HOST_DEVICE
@@ -913,6 +939,7 @@ class GemmQuantNv {
               TensorRef<cutlass::float_ue4m3_t, LayoutC> ref_D_sf_,
               ElementAccumulator_* global_scale_,
               int n_col_blocks_ = 1,
+              int logical_sf_cols_ = 1,
               int padded_sf_elems_ = 0,
               typename EpilogueOutputOp::Params epilogue_ =
                   typename EpilogueOutputOp::Params(),
@@ -928,6 +955,7 @@ class GemmQuantNv {
           ref_D_sf(ref_D_sf_),
           global_scale(global_scale_),
           n_col_blocks(n_col_blocks_),
+          logical_sf_cols(logical_sf_cols_),
           padded_sf_elems(padded_sf_elems_),
           epilogue(epilogue_),
           split_k_slices(split_k_slices),
@@ -1024,6 +1052,7 @@ class GemmQuantNv {
                                           args.ref_D_sf,
                                           args.global_scale,
                                           args.n_col_blocks,
+                                          args.logical_sf_cols,
                                           args.padded_sf_elems,
                                           args.epilogue,
                                           static_cast<int *>(workspace),
@@ -1049,6 +1078,7 @@ class GemmQuantNv {
     params_.ref_D_sf.reset(args.ref_D_sf.data());
     params_.global_scale = args.global_scale;
     params_.n_col_blocks = args.n_col_blocks;
+    params_.logical_sf_cols = args.logical_sf_cols;
     params_.padded_sf_elems = args.padded_sf_elems;
     params_.output_op = args.epilogue;
     params_.semaphore = static_cast<int *>(workspace);

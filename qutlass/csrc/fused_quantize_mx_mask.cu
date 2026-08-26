@@ -88,6 +88,9 @@ struct GemmRunner {
       {static_cast<cutlass::float_e2m1_t*>(out.mutable_data_ptr()), N},
       {static_cast<cutlass::float_ue8m0_t*>(out_sf.mutable_data_ptr()), M},
       {static_cast<uint8_t*>(out_mask.mutable_data_ptr()), M}, //FIXME: bfloat16_t
+        static_cast<int>(out_sf.size(1) / 4),
+        static_cast<int>(x.size(-1) / 32),
+        static_cast<int>(out_sf.numel()),
         cutlass::bfloat16_t(0) //TODO (later): float
     };
 

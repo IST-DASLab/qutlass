@@ -366,9 +366,9 @@ struct Sm100BlockScaleFactorRowStore {
         int c_k = K_tile * 4 + c_in_block;
 
         int flat_sf = m_k * sf_cols_per_group + c_k;
-        int total_sf_cols = n_col_blocks * 4;
-        int data_row = flat_sf / total_sf_cols;
-        int data_col = flat_sf % total_sf_cols;
+        int logical_sf_cols = groups_per_row * sf_cols_per_group;
+        int data_row = flat_sf / logical_sf_cols;
+        int data_col = flat_sf % logical_sf_cols;
 
         int data_offset = (data_row / 128) * n_col_blocks * 512
                         + (data_col / 4) * 512
@@ -378,8 +378,6 @@ struct Sm100BlockScaleFactorRowStore {
 
         if (elem_less(tCcSFD_pred(i * SFVecSize * V), residue_tC_cSFD)) {
           *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = tCrSFD_vec(i);
-        } else {
-          *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = VecType(0);
         }
       }
       /// Step3: Compute quantized output values
@@ -448,22 +446,27 @@ struct Sm100BlockScaleFactorRowStore {
     int sf_cols_per_group = N / SFVecSize;
     int n_sf_tiles_kernel = sf_cols_per_group / 4;
 
-    // Inline zero-init: last M tile zeros SF padding beyond tile coverage
+    // The last M tile cooperatively clears row and column padding.
     int cta_m = size<0>(args.tile_shape_mnk);
     int num_tiles_m = (int(M) + cta_m - 1) / cta_m;
-    if (tile_coord_m == num_tiles_m - 1 && tile_coord_n == 0 && args.thread_idx == 0) {
-      int covered_flat = num_tiles_m * cta_m * sf_cols_per_group;
-      int total_sf_cols = params_ptr->n_col_blocks * 4;
+    if (tile_coord_m == num_tiles_m - 1 && tile_coord_n == 0) {
+      int padded_sf_cols = params_ptr->n_col_blocks * 4;
+      int logical_sf_cols = params_ptr->groups_per_row * sf_cols_per_group;
+      int logical_sf_rows = int(M) / params_ptr->groups_per_row;
       uint8_t* sf_ptr = reinterpret_cast<uint8_t*>(ptr_scale_factor);
-      for (int i = covered_flat; i < params_ptr->padded_sf_elems; ++i) {
-        int dr = i / total_sf_cols;
-        int dc = i % total_sf_cols;
-        int off = (dr / 128) * params_ptr->n_col_blocks * 512
-                + (dc / 4) * 512
-                + (dr % 32) * 16
-                + ((dr % 128) / 32) * 4
-                + dc % 4;
-        sf_ptr[off] = 0;
+      constexpr int StoreThreadCount = 128;
+      for (int i = args.thread_idx;
+           i < params_ptr->padded_sf_elems; i += StoreThreadCount) {
+        int dr = i / padded_sf_cols;
+        int dc = i % padded_sf_cols;
+        if (dr >= logical_sf_rows || dc >= logical_sf_cols) {
+          int off = (dr / 128) * params_ptr->n_col_blocks * 512
+                  + (dc / 4) * 512
+                  + (dr % 32) * 16
+                  + ((dr % 128) / 32) * 4
+                  + dc % 4;
+          sf_ptr[off] = 0;
+        }
       }
     }
 
@@ -694,9 +697,9 @@ struct Sm100BlockScaleFactorRowStoreNv {
         int c_k = K_tile * 4 + c_in_block;
 
         int flat_sf = m_k * sf_cols_per_group + c_k;
-        int total_sf_cols = n_col_blocks * 4;
-        int data_row = flat_sf / total_sf_cols;
-        int data_col = flat_sf % total_sf_cols;
+        int logical_sf_cols = groups_per_row * sf_cols_per_group;
+        int data_row = flat_sf / logical_sf_cols;
+        int data_col = flat_sf % logical_sf_cols;
 
         int data_offset = (data_row / 128) * n_col_blocks * 512
                         + (data_col / 4) * 512
@@ -706,8 +709,6 @@ struct Sm100BlockScaleFactorRowStoreNv {
 
         if (elem_less(tCcSFD_pred(i * SFVecSize * V), residue_tC_cSFD)) {
           *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = tCrSFD_vec(i);
-        } else {
-          *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = VecType(0);
         }
       }
       /// Step3: Compute quantized output values
@@ -775,22 +776,27 @@ struct Sm100BlockScaleFactorRowStoreNv {
     int sf_cols_per_group = N / SFVecSize;
     int n_sf_tiles_kernel = sf_cols_per_group / 4;
 
-    // Inline zero-init: last M tile zeros SF padding beyond tile coverage
+    // The last M tile cooperatively clears row and column padding.
     int cta_m = size<0>(args.tile_shape_mnk);
     int num_tiles_m = (int(M) + cta_m - 1) / cta_m;
-    if (tile_coord_m == num_tiles_m - 1 && tile_coord_n == 0 && args.thread_idx == 0) {
-      int covered_flat = num_tiles_m * cta_m * sf_cols_per_group;
-      int total_sf_cols = params_ptr->n_col_blocks * 4;
+    if (tile_coord_m == num_tiles_m - 1 && tile_coord_n == 0) {
+      int padded_sf_cols = params_ptr->n_col_blocks * 4;
+      int logical_sf_cols = params_ptr->groups_per_row * sf_cols_per_group;
+      int logical_sf_rows = int(M) / params_ptr->groups_per_row;
       uint8_t* sf_ptr = reinterpret_cast<uint8_t*>(ptr_scale_factor);
-      for (int i = covered_flat; i < params_ptr->padded_sf_elems; ++i) {
-        int dr = i / total_sf_cols;
-        int dc = i % total_sf_cols;
-        int off = (dr / 128) * params_ptr->n_col_blocks * 512
-                + (dc / 4) * 512
-                + (dr % 32) * 16
-                + ((dr % 128) / 32) * 4
-                + dc % 4;
-        sf_ptr[off] = 0;
+      constexpr int StoreThreadCount = 128;
+      for (int i = args.thread_idx;
+           i < params_ptr->padded_sf_elems; i += StoreThreadCount) {
+        int dr = i / padded_sf_cols;
+        int dc = i % padded_sf_cols;
+        if (dr >= logical_sf_rows || dc >= logical_sf_cols) {
+          int off = (dr / 128) * params_ptr->n_col_blocks * 512
+                  + (dc / 4) * 512
+                  + (dr % 32) * 16
+                  + ((dr % 128) / 32) * 4
+                  + dc % 4;
+          sf_ptr[off] = 0;
+        }
       }
     }
 

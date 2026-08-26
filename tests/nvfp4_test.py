@@ -129,7 +129,12 @@ def _unpack_mask(clip_mask: torch.Tensor) -> torch.Tensor:
     return clip_mask_unpacked_dq
 
 
-def _forward_quantize_ref(x: torch.Tensor, h: torch.Tensor, rot_size: int):
+def _forward_quantize_ref(
+    x: torch.Tensor,
+    h: torch.Tensor,
+    rot_size: int,
+    global_scale: float = 6.0,
+):
     device = x.device
 
     xh_ref64 = (
@@ -138,7 +143,7 @@ def _forward_quantize_ref(x: torch.Tensor, h: torch.Tensor, rot_size: int):
     ).flatten(start_dim=-2)
 
     abs_max = xh_ref64.unflatten(dim=-1, sizes=(-1, 16)).abs().amax(dim=-1)
-    scales_ref64_ = abs_max + 1e-8
+    scales_ref64_ = global_scale * (abs_max / 6.0) + 1e-8
 
     xh_e4m3_ref = scales_ref64_.to(dtype=torch.float8_e4m3fn)
     scales_ref64 = xh_e4m3_ref.to(dtype=torch.float64)
@@ -146,7 +151,7 @@ def _forward_quantize_ref(x: torch.Tensor, h: torch.Tensor, rot_size: int):
         xh_ref64.unflatten(dim=-1, sizes=(-1, 16)) / scales_ref64[..., None]
     ).flatten(start_dim=-2)
 
-    xh_scaled_ref64 *= 6.0
+    xh_scaled_ref64 *= global_scale
 
     clip_mask_unpacked_ref = xh_scaled_ref64.abs() < 6.0
     clip_mask_ref = torch.zeros(
@@ -156,7 +161,9 @@ def _forward_quantize_ref(x: torch.Tensor, h: torch.Tensor, rot_size: int):
         clip_mask_ref |= clip_mask_unpacked_ref[..., i::8].to(dtype=torch.uint8) << i
 
     xh_fp4_ref, xh_e2m1_ref = _rtne_fp4(xh_scaled_ref64)
-    xh_dq, xh_fp4_dq, scales_dq = _dq_fp4(xh_e2m1_ref, xh_e4m3_ref, 6.0)
+    xh_dq, xh_fp4_dq, scales_dq = _dq_fp4(
+        xh_e2m1_ref, xh_e4m3_ref, global_scale
+    )
     clip_mask_unpacked_dq = _unpack_mask(clip_mask_ref)
 
     assert xh_fp4_dq.equal(xh_fp4_ref)
@@ -266,3 +273,29 @@ def test_llama_shapes(model: str, layer_idx: int, batch: int, rot_size: int, bac
         a_sf.view(-1, k // 16), b_sf.view(-1, k // 16),
         alpha, backend=backend)
     assert out.equal(out_ref.to(dtype=out.dtype))
+
+
+@pytest.mark.parametrize("rows", [1, 127, 128, 129])
+@pytest.mark.parametrize("global_scale_value", [1.0, 6.0])
+@pytest.mark.parametrize("rot_size", ROT_SIZES)
+@pytest.mark.parametrize("groups_per_row", [1, 3])
+@torch.inference_mode()
+def test_sf_swizzled_layout_fusion(
+    rows: int,
+    global_scale_value: float,
+    rot_size: int,
+    groups_per_row: int,
+):
+    """Check NV blocked output, including row and SF-column padding."""
+    k = rot_size * groups_per_row
+    h = get_hadamard_matrix(rot_size, DTYPE, DEVICE)
+    a = torch.randn(rows, k, dtype=DTYPE, device=DEVICE) * 10.0
+    global_scale = torch.tensor([global_scale_value], device=DEVICE)
+
+    fp4, sf = fusedQuantizeNv(a, h, global_scale)
+    _, _, (fp4_ref, sf_ref_rm, _) = _forward_quantize_ref(
+        a, h, rot_size, global_scale=global_scale_value
+    )
+    sf_ref_blocked = to_blocked(sf_ref_rm, use_triton_kernel=True)
+
+    assert sf.view(torch.uint8).equal(sf_ref_blocked.view(torch.uint8))

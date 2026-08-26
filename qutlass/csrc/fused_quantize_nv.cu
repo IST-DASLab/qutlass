@@ -75,7 +75,8 @@ struct GemmRunner {
     int32_t M, int32_t N, int32_t K,
     torch::stable::Device device,
     torch::stable::Tensor const& global_scale,
-    int n_col_blocks = 1)
+    int n_col_blocks = 1,
+    int logical_sf_cols = 1)
   {
 
     using GemmCoord = cutlass::gemm::GemmCoord;
@@ -92,6 +93,7 @@ struct GemmRunner {
       {static_cast<cutlass::float_ue4m3_t*>(out_sf.mutable_data_ptr()), M},
       static_cast<ElementAccumulator*>(const_cast<void*>(global_scale.const_data_ptr())),
       n_col_blocks,
+      logical_sf_cols,
       (int)out_sf.numel(),
       cutlass::bfloat16_t(0) //TODO (later): float
     };
@@ -126,7 +128,8 @@ void fusedQuantizeNvQuest_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 16>> runGemm;
   int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale,
+              n_col_blocks, A.size(-1) / 16);
 }
 
 void fusedQuantizeNvQuestHad32_host(torch::stable::Tensor& D,
@@ -145,7 +148,8 @@ void fusedQuantizeNvQuestHad32_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 32>> runGemm;
   int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale,
+              n_col_blocks, A.size(-1) / 16);
 }
 
 void fusedQuantizeNvQuestHad64_host(torch::stable::Tensor& D,
@@ -164,7 +168,8 @@ void fusedQuantizeNvQuestHad64_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 64>> runGemm;
   int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale,
+              n_col_blocks, A.size(-1) / 16);
 }
 
 void fusedQuantizeNvQuestHad128_host(torch::stable::Tensor& D,
@@ -183,7 +188,8 @@ void fusedQuantizeNvQuestHad128_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 128>> runGemm;
   int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale,
+              n_col_blocks, A.size(-1) / 16);
 }
 
 void fusedQuantizeNvAbsMax_host(torch::stable::Tensor& D,
@@ -202,7 +208,8 @@ void fusedQuantizeNvAbsMax_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 16>> runGemm;
   int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale,
+              n_col_blocks, A.size(-1) / 16);
 }
 
 void fusedQuantizeNvAbsMaxHad32_host(torch::stable::Tensor& D,
@@ -221,7 +228,8 @@ void fusedQuantizeNvAbsMaxHad32_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 32>> runGemm;
   int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale,
+              n_col_blocks, A.size(-1) / 16);
 }
 
 void fusedQuantizeNvAbsMaxHad64_host(torch::stable::Tensor& D,
@@ -240,7 +248,8 @@ void fusedQuantizeNvAbsMaxHad64_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 64>> runGemm;
   int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale,
+              n_col_blocks, A.size(-1) / 16);
 }
 
 void fusedQuantizeNvAbsMaxHad128_host(torch::stable::Tensor& D,
@@ -259,7 +268,8 @@ void fusedQuantizeNvAbsMaxHad128_host(torch::stable::Tensor& D,
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 128>> runGemm;
   int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale,
+              n_col_blocks, A.size(-1) / 16);
 }
 
 } // namespace QUTLASS

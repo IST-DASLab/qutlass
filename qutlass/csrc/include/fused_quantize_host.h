@@ -33,7 +33,8 @@ void fusedQuantizeMxQuestWithMask_host(torch::stable::Tensor&       D,
 void fusedQuantizeMxAbsMax_host(torch::stable::Tensor&       D,
                                 torch::stable::Tensor&       D_sf,
                                 torch::stable::Tensor const& A,
-                                torch::stable::Tensor const& B);
+                                torch::stable::Tensor const& B,
+                                torch::stable::Tensor const& global_scale);
 
 void fusedQuantizeMxQuestHad64_host(torch::stable::Tensor&       D,
                                     torch::stable::Tensor&       D_sf,
@@ -43,7 +44,8 @@ void fusedQuantizeMxQuestHad64_host(torch::stable::Tensor&       D,
 void fusedQuantizeMxAbsMaxHad64_host(torch::stable::Tensor&       D,
                                      torch::stable::Tensor&       D_sf,
                                      torch::stable::Tensor const& A,
-                                     torch::stable::Tensor const& B);
+                                     torch::stable::Tensor const& B,
+                                     torch::stable::Tensor const& global_scale);
 
 void fusedQuantizeMxQuestHad128_host(torch::stable::Tensor&       D,
                                      torch::stable::Tensor&       D_sf,
@@ -53,7 +55,8 @@ void fusedQuantizeMxQuestHad128_host(torch::stable::Tensor&       D,
 void fusedQuantizeMxAbsMaxHad128_host(torch::stable::Tensor&       D,
                                       torch::stable::Tensor&       D_sf,
                                       torch::stable::Tensor const& A,
-                                      torch::stable::Tensor const& B);
+                                      torch::stable::Tensor const& B,
+                                      torch::stable::Tensor const& global_scale);
 
 void fusedQuantizeNvQuest_host(torch::stable::Tensor&       D,
                                torch::stable::Tensor&       D_sf,

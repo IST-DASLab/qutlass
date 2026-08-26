@@ -292,36 +292,39 @@ std::tuple<Tensor, Tensor, Tensor> fusedQuantizeMxQuestWithMask(
 std::tuple<Tensor, Tensor> fusedQuantizeMxAbsMax(Tensor const& A,
                                                  Tensor const& B,
                                                  Tensor& OUT,
-                                                 Tensor& OUT_sf)
+                                                 Tensor& OUT_sf,
+                                                 Tensor const& global_scale)
 {
     check_all_contiguous("fusedQuantizeMxAbsMax", {{A, "A", 0},
                                                    {B, "B", 1},
                                                    {OUT, "OUT", 2},
                                                    {OUT_sf, "OUT_sf", 3}});
-    check_device_type_cuda("fusedQuantizeMxAbsMax", {A, B, OUT, OUT_sf});
+    check_device_type_cuda("fusedQuantizeMxAbsMax", {A, B, OUT, OUT_sf, global_scale});
     check_all_same_gpu("fusedQuantizeMxAbsMax", {{A, "A", 0},
                                                  {B, "B", 1},
                                                  {OUT, "OUT", 2},
-                                                 {OUT_sf, "OUT_sf", 3}});
+                                                 {OUT_sf, "OUT_sf", 3},
+                                                 {global_scale, "global_scale", 4}});
     STD_TORCH_CHECK(A.scalar_type() == ScalarType::BFloat16, "A must be bf16");
     STD_TORCH_CHECK(B.scalar_type() == ScalarType::BFloat16, "B must be bf16");
+    STD_TORCH_CHECK(global_scale.scalar_type() == ScalarType::Float,
+                    "global_scale must be float");
+    STD_TORCH_CHECK(global_scale.dim() == 1 && global_scale.size(0) == 1,
+                    "global_scale must be a scalar tensor");
     STD_TORCH_CHECK(B.size(0) == B.size(1), "Rotation matrix must be square");
 
     uint32_t HAD_GS = B.size(0);
     STD_TORCH_CHECK((A.numel() % HAD_GS) == 0, "A must be divisible by", HAD_GS);
 
     if (HAD_GS == 32) {
-        fusedQuantizeMxAbsMax_host(OUT, OUT_sf, A, B);
+        fusedQuantizeMxAbsMax_host(OUT, OUT_sf, A, B, global_scale);
     } else if (HAD_GS == 64) {
-        fusedQuantizeMxAbsMaxHad64_host(OUT, OUT_sf, A, B);
+        fusedQuantizeMxAbsMaxHad64_host(OUT, OUT_sf, A, B, global_scale);
     } else if (HAD_GS == 128) {
-#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110
-        // FIXME: add input global_scale to interface for consistency
-        auto global_scale =
-          torch::stable::new_zeros(A, {1}, ScalarType::Float);
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110
         fusedQuantizeMxAbsMax_host_sm100(OUT, OUT_sf, A, B, global_scale);
 #elif TARGET_CUDA_ARCH == 120
-        fusedQuantizeMxAbsMaxHad128_host(OUT, OUT_sf, A, B);
+        fusedQuantizeMxAbsMaxHad128_host(OUT, OUT_sf, A, B, global_scale);
 #endif
     } else {
         STD_TORCH_CHECK(false,
@@ -411,7 +414,7 @@ std::tuple<Tensor, Tensor> fusedQuantizeNvAbsMax(Tensor const& A,
     } else if (HAD_GS == 64) {
         fusedQuantizeNvAbsMaxHad64_host(OUT, OUT_sf, A, B, global_scale);
     } else if(HAD_GS==128){
-#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110
         fusedQuantizeNvAbsMax_host_sm100(OUT, OUT_sf, A, B, global_scale);
 #elif TARGET_CUDA_ARCH == 120
         fusedQuantizeNvAbsMaxHad128_host(OUT, OUT_sf, A, B, global_scale);
@@ -502,7 +505,7 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_qutlass_C, ops) {
   ops.def("matmul_mxf8_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
   ops.def("matmul_mxf8_bf16_nn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
   ops.def("fusedQuantizeMxQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf) -> (Tensor, Tensor)");
-  ops.def("fusedQuantizeMxAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf) -> (Tensor, Tensor)");
+  ops.def("fusedQuantizeMxAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
   ops.def("fusedQuantizeNvQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
   ops.def("fusedQuantizeNvAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
 #ifndef QUTLASS_MINIMAL_BUILD

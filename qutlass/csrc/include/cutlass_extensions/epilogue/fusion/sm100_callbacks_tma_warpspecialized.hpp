@@ -116,6 +116,9 @@ struct FusionCallbacks<
     using StrideBeta  = Stride<_0,_0,int64_t>;
     StrideAlpha dAlpha = {_0{}, _0{}, 0};
     StrideBeta  dBeta  = {_0{}, _0{}, 0};
+    int n_col_blocks = 1;
+    int groups_per_row = 1;
+    int padded_sf_elems = 0;
 
     operator typename Impl::Arguments() const {
       return
@@ -131,7 +134,7 @@ struct FusionCallbacks<
             },                    // end binary op
             {}                    // ternary args : multiply_add
           },
-          {block_scale_factor_ptr, norm_constant_ptr, dNormConst} // BlockScaleFactor args
+          {block_scale_factor_ptr, norm_constant_ptr, dNormConst, n_col_blocks, groups_per_row, padded_sf_elems} // BlockScaleFactor args
         };   // end ternary op
     }
   };
@@ -199,6 +202,9 @@ struct FusionCallbacks<
     using StrideBeta  = Stride<_0,_0,int64_t>;
     StrideAlpha dAlpha = {_0{}, _0{}, 0};
     StrideBeta  dBeta  = {_0{}, _0{}, 0};
+    int n_col_blocks = 1;
+    int groups_per_row = 1;
+    int padded_sf_elems = 0;
 
     operator typename Impl::Arguments() const {
       return
@@ -214,7 +220,7 @@ struct FusionCallbacks<
             },                    // end binary op
             {}                    // ternary args : multiply_add
           },
-          {block_scale_factor_ptr, norm_constant_ptr, dNormConst} // BlockScaleFactor args
+          {block_scale_factor_ptr, norm_constant_ptr, dNormConst, n_col_blocks, groups_per_row, padded_sf_elems} // BlockScaleFactor args
         };   // end ternary op
     }
   };

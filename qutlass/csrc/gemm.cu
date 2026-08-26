@@ -190,7 +190,7 @@ void matmul_host_mxf4_bf16_tn(torch::stable::Tensor& D,
     using LayoutBTag = cutlass::layout::ColumnMajor;
     static constexpr int AlignmentB = 128;
 
-#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110 //TODO: improve tuning
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110 //TODO: improve tuning
     using ArchTag = cutlass::arch::Sm100;
     if(m<=16){
         using MmaTileShape       = Shape<_128,_128,_256>;
@@ -266,7 +266,7 @@ void matmul_host_nvf4_bf16_tn(torch::stable::Tensor& D,
     using LayoutBTag = cutlass::layout::ColumnMajor;
     static constexpr int AlignmentB = 32;
 
-#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110 //TODO: improve tuning
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110 //TODO: improve tuning
     using ArchTag = cutlass::arch::Sm100;
     if(m<=16){
         using MmaTileShape       = Shape<_128,_128,_256>;
@@ -344,7 +344,7 @@ void matmul_host_mxf8_bf16_tn(torch::stable::Tensor& D,
     using LayoutBTag = cutlass::layout::ColumnMajor;
     static constexpr int AlignmentB = 16;
 
-#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110
     using ArchTag = cutlass::arch::Sm100;
 
     if(m<=8192){
@@ -404,7 +404,7 @@ void matmul_host_mxf8_bf16_nn(torch::stable::Tensor& D,
     using LayoutBTag = cutlass::layout::ColumnMajor;
     static constexpr int AlignmentB = 16;
 
-#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110
     using ArchTag = cutlass::arch::Sm100;
 
     if(m<=8192){

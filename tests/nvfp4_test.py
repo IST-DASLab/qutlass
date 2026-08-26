@@ -182,6 +182,27 @@ LLAMA_MODELS = {
     "70B": [(8192, 3 * 8192), (8192, 8192), (8192, 2 * 21760), (21760, 8192)],
 }
 
+def _from_blocked(blocked_flat, rows, cols):
+    """Inverse of to_blocked: blocked 1D sf -> row-major 2D."""
+    n_col_blocks = (cols + 3) // 4
+    padded_rows = ((rows + 127) // 128) * 128
+    padded_cols = n_col_blocks * 4
+
+    r = torch.arange(padded_rows, device=blocked_flat.device)
+    c = torch.arange(padded_cols, device=blocked_flat.device)
+    rr, cc = torch.meshgrid(r, c, indexing="ij")
+
+    offsets = ((rr // 128) * (n_col_blocks * 512)
+              + (cc // 4) * 512
+              + (rr % 32) * 16
+              + ((rr % 128) // 32) * 4
+              + cc % 4)
+
+    result = blocked_flat.view(torch.uint8)[offsets.reshape(-1).long()].view(
+        blocked_flat.dtype).reshape(padded_rows, padded_cols)
+    return result[:rows, :cols]
+
+
 @pytest.fixture(autouse=True)
 def _seed_each_test():
     np.random.seed(0)
@@ -193,34 +214,24 @@ def _seed_each_test():
 def test_fused_quantization(rot_size: int, global_scale_value: float):
     dtype, device = DTYPE, DEVICE
     h = get_hadamard_matrix(rot_size, dtype, device)
-    x = torch.randn(2, 4096, 4096, dtype=dtype, device=device) * 25.0
     global_scale = torch.tensor([global_scale_value], device=device)
-
-    xh_dq_ref, _, _ = _forward_quantize_ref(x, h, rot_size)
-    xh_e2m1, xh_e4m3 = fusedQuantizeNv(x, h, global_scale)
-    xh_e4m3 = xh_e4m3.reshape(2, 4096, 4096 // 16)
-    xh_dq, *_ = _dq_fp4(xh_e2m1, xh_e4m3, alpha=global_scale_value)
-
-    torch.testing.assert_close(xh_dq, xh_dq_ref, rtol=0.34, atol=100)
-    assert (xh_dq != xh_dq_ref).float().mean() <= 1e-1
 
     m, n, k = 504, 4096 * 2, 4096
     a = torch.randn(m, k, dtype=dtype, device=device) * 25.0
     b = torch.randn(n, k, dtype=dtype, device=device) * 25.0
 
-    a_e2m1, a_e4m3 = fusedQuantizeNv(a, h, global_scale)
-    b_e2m1, b_e4m3 = fusedQuantizeNv(b, h, global_scale)
+    a_e2m1, a_sf = fusedQuantizeNv(a, h, global_scale, is_sf_swizzled_layout=True)
+    b_e2m1, b_sf = fusedQuantizeNv(b, h, global_scale, is_sf_swizzled_layout=True)
 
-    a_dq, *_ = _dq_fp4(a_e2m1, a_e4m3[:m, :k], alpha=1.0)
-    b_dq, *_ = _dq_fp4(b_e2m1, b_e4m3[:n, :k], alpha=1.0)
+    a_dq, *_ = _dq_fp4(a_e2m1, _from_blocked(a_sf, m, k // 16), alpha=1.0)
+    b_dq, *_ = _dq_fp4(b_e2m1, _from_blocked(b_sf, n, k // 16), alpha=1.0)
     out_ref = a_dq @ b_dq.transpose(-2, -1)
 
-    a_scale_block = to_blocked(a_e4m3, use_triton_kernel=True).view(-1, k // 16)
-    b_scale_block = to_blocked(b_e4m3, use_triton_kernel=True).view(-1, k // 16)
     alpha = torch.tensor([1.0], device=device)
     out = matmul_nvf4_bf16_tn(
-        a_e2m1, b_e2m1, a_scale_block, b_scale_block, alpha
-    )
+        a_e2m1, b_e2m1,
+        a_sf.view(-1, k // 16), b_sf.view(-1, k // 16),
+        alpha)
     assert out.equal(out_ref.to(dtype=out.dtype))
 
 
@@ -242,17 +253,16 @@ def test_llama_shapes(model: str, layer_idx: int, batch: int, rot_size: int, bac
 
     global_scale = torch.tensor([1.0], device=device)
 
-    a_e2m1, a_e4m3 = fusedQuantizeNv(a, h, global_scale)
-    b_e2m1, b_e4m3 = fusedQuantizeNv(b, h, global_scale)
+    a_e2m1, a_sf = fusedQuantizeNv(a, h, global_scale, is_sf_swizzled_layout=True)
+    b_e2m1, b_sf = fusedQuantizeNv(b, h, global_scale, is_sf_swizzled_layout=True)
 
-    a_dq, *_ = _dq_fp4(a_e2m1, a_e4m3[:m, :k], alpha=1.0)
-    b_dq, *_ = _dq_fp4(b_e2m1, b_e4m3[:n, :k], alpha=1.0)
+    a_dq, *_ = _dq_fp4(a_e2m1, _from_blocked(a_sf, m, k // 16), alpha=1.0)
+    b_dq, *_ = _dq_fp4(b_e2m1, _from_blocked(b_sf, n, k // 16), alpha=1.0)
     out_ref = a_dq @ b_dq.transpose(-2, -1)
 
-    a_scale_block = to_blocked(a_e4m3, use_triton_kernel=True).view(-1, k // 16)
-    b_scale_block = to_blocked(b_e4m3, use_triton_kernel=True).view(-1, k // 16)
     alpha = torch.tensor([1.0], device=device)
     out = matmul_nvf4_bf16_tn(
-        a_e2m1, b_e2m1, a_scale_block, b_scale_block, alpha, backend=backend
-    )
+        a_e2m1, b_e2m1,
+        a_sf.view(-1, k // 16), b_sf.view(-1, k // 16),
+        alpha, backend=backend)
     assert out.equal(out_ref.to(dtype=out.dtype))

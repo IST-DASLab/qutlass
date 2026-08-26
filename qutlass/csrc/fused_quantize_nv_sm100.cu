@@ -157,6 +157,9 @@ typename Gemm::Arguments args_from_options_nv(torch::stable::Tensor& D,
     if constexpr (IsBlockScaleSupported) {
         arguments.epilogue.thread.block_scale_factor_ptr = static_cast<cutlass::float_ue4m3_t*>(D_sf.mutable_data_ptr());
         arguments.epilogue.thread.norm_constant_ptr      = static_cast<ElementAccumulator const*>(global_scale.const_data_ptr());
+        arguments.epilogue.thread.n_col_blocks    = D_sf.size(1) / 4;
+        arguments.epilogue.thread.groups_per_row  = A.size(-1) / N;
+        arguments.epilogue.thread.padded_sf_elems = D_sf.numel();
     }
 
     return arguments;
@@ -195,7 +198,7 @@ void fusedQuantizeNvAbsMax_host_sm100(torch::stable::Tensor& D,
                                       torch::stable::Tensor const& B,
                                       torch::stable::Tensor const& global_scale)
 {
-#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 110
+#if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110
     int32_t M = A.numel() / 128;
     int32_t N = B.size(1);
     int32_t K = 128;

@@ -116,7 +116,7 @@ namespace detail {
 
     CUTLASS_PRAGMA_UNROLL
     for (int sf_v = 0; sf_v < NumVecs; ++sf_v) {
-        output_frgs[sf_v] = cutlass::NumericArrayConverter<ElementOutput, ElementCompute, SFVecSize>{}(mul_array(div_array(compute_frgs[sf_v], pvscales.data()[sf_v]), ElementCompute(3)));
+        output_frgs[sf_v] = cutlass::NumericArrayConverter<ElementOutput, ElementCompute, SFVecSize>{}(mul_array(div_array(compute_frgs[sf_v], pvscales.data()[sf_v]), norm_constant));
     }
 
     return frg_output;
@@ -180,6 +180,9 @@ struct Sm100BlockScaleFactorRowStore {
     ElementBlockScaleFactor* ptr_scale_factor = nullptr;
     ElementCompute const* norm_constant_ptr = nullptr;
     NormalConstStrideMNL norm_constant_stride = {};
+    int n_col_blocks = 1;
+    int groups_per_row = 1;
+    int padded_sf_elems = 0;
   };
 
   using Params = Arguments;
@@ -260,7 +263,12 @@ struct Sm100BlockScaleFactorRowStore {
           Params const* params_ptr_,
           EpiTileCoordMN epi_tile_coord_mn_,    // (epi_tile_coord_m, epi_tile_coord_n)
           ElementType norm_constant_,
-          ElementType norm_constant_scaled_down_)
+          ElementType norm_constant_scaled_down_,
+          int n_col_blocks_,
+          int groups_per_row_,
+          int sf_cols_per_group_,
+          int n_sf_tiles_kernel_,
+          uint8_t* raw_sf_ptr_)
       : tC_rSFD(cute::forward<RTensor>(tC_rSFD_))
       , tC_gSFD(cute::forward<GTensor>(tC_gSFD_))
       , tC_cSFD(tC_cSFD_)
@@ -268,7 +276,12 @@ struct Sm100BlockScaleFactorRowStore {
       , params_ptr(params_ptr_)
       , norm_constant(norm_constant_)
       , norm_constant_scaled_down(norm_constant_scaled_down_)
-      , epi_tile_coord_mn(epi_tile_coord_mn_){}
+      , epi_tile_coord_mn(epi_tile_coord_mn_)
+      , n_col_blocks(n_col_blocks_)
+      , groups_per_row(groups_per_row_)
+      , sf_cols_per_group(sf_cols_per_group_)
+      , n_sf_tiles_kernel(n_sf_tiles_kernel_)
+      , raw_sf_ptr(raw_sf_ptr_){}
 
     static_assert(is_same_v<ElementType, ElementCompute>);
     RTensor tC_rSFD;
@@ -279,6 +292,11 @@ struct Sm100BlockScaleFactorRowStore {
     ElementCompute norm_constant;
     ElementCompute norm_constant_scaled_down;
     EpiTileCoordMN epi_tile_coord_mn;
+    int n_col_blocks;
+    int groups_per_row;
+    int sf_cols_per_group;
+    int n_sf_tiles_kernel;
+    uint8_t* raw_sf_ptr;
 
     template <class ElementAccumulator, class ElementInput, int FragmentSize>
     CUTLASS_DEVICE auto
@@ -332,8 +350,36 @@ struct Sm100BlockScaleFactorRowStore {
       Tensor tCcSFD_pred = tC_cSFD(_,_,_, epi_m, epi_n);
       CUTLASS_PRAGMA_UNROLL
       for (int i = 0; i < size(tCrSFD_vec); i++){
+        auto* vec_base = cute::raw_pointer_cast(tCgSFD_vec.data());
+        int kb = int((reinterpret_cast<uint8_t*>(vec_base) - raw_sf_ptr))
+               + int(tCgSFD_vec.layout()(i)) * int(sizeof(VecType));
+
+        int stride_m = n_sf_tiles_kernel * 512;
+        int M_tile = kb / stride_m;
+        int rem = kb % stride_m;
+        int K_tile = rem / 512;
+        int within = rem % 512;
+        int c_in_block = within % 4;
+        int idx = within / 4;
+        int m_within = (idx & 3) * 32 + idx / 4;
+        int m_k = M_tile * 128 + m_within;
+        int c_k = K_tile * 4 + c_in_block;
+
+        int flat_sf = m_k * sf_cols_per_group + c_k;
+        int total_sf_cols = n_col_blocks * 4;
+        int data_row = flat_sf / total_sf_cols;
+        int data_col = flat_sf % total_sf_cols;
+
+        int data_offset = (data_row / 128) * n_col_blocks * 512
+                        + (data_col / 4) * 512
+                        + (data_row % 32) * 16
+                        + ((data_row % 128) / 32) * 4
+                        + data_col % 4;
+
         if (elem_less(tCcSFD_pred(i * SFVecSize * V), residue_tC_cSFD)) {
-        tCgSFD_vec(i) = tCrSFD_vec(i);
+          *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = tCrSFD_vec(i);
+        } else {
+          *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = VecType(0);
         }
       }
       /// Step3: Compute quantized output values
@@ -363,8 +409,11 @@ struct Sm100BlockScaleFactorRowStore {
 
     auto epi_tile_mn = shape<1>(zipped_divide(make_layout(take<0,2>(args.tile_shape_mnk)), args.epi_tile));
 
+    // Use SfKMajorAtom to write scale factors directly in blocked (TMEM) layout,
+    // fusing the to_blocked() reordering into the epilogue store.
+    using BlockedSfAtom = typename cutlass::detail::qutlass::Sm1xxBlockScaledBasicChunk<SFVecSize>::SfKMajorAtom;
     Tensor mSFD = make_tensor(make_gmem_ptr(ptr_scale_factor),
-                                                    Sm1xxBlockScaledOutputConfig::tile_atom_to_shape_SFD(args.problem_shape_mnkl));
+                             tile_to_shape(BlockedSfAtom{}, make_shape(M, N, L), Step<_2,_1,_3>{}));
 
     static_assert(size<1>(EpilogueTile{}) && ((size<1>(EpilogueTile{}) & (size<1>(EpilogueTile{}) - 1)) == 0), "Epilogue Tile N should be pow of 2");
     Tensor gSFD = local_tile(mSFD, args.epi_tile, make_coord(_,_,tile_coord_l));                   // (EPI_M,EPI_N, #EPI_Ms, #EPI_Ns)
@@ -392,8 +441,31 @@ struct Sm100BlockScaleFactorRowStore {
       print("tCrSFD       ");print(tCrSFD);     print("\n");
       print("filter(tCrSFD) ");print(filter(tCrSFD));     print("\n");
       print("filter(tCgSFD) ");print(filter(tCgSFD));     print("\n");
+      printf("n_col_blocks=%d groups_per_row=%d N=%d SFVecSize=%d\n", params_ptr->n_col_blocks, params_ptr->groups_per_row, int(N), int(SFVecSize));
     }
 #endif
+
+    int sf_cols_per_group = N / SFVecSize;
+    int n_sf_tiles_kernel = sf_cols_per_group / 4;
+
+    // Inline zero-init: last M tile zeros SF padding beyond tile coverage
+    int cta_m = size<0>(args.tile_shape_mnk);
+    int num_tiles_m = (int(M) + cta_m - 1) / cta_m;
+    if (tile_coord_m == num_tiles_m - 1 && tile_coord_n == 0 && args.thread_idx == 0) {
+      int covered_flat = num_tiles_m * cta_m * sf_cols_per_group;
+      int total_sf_cols = params_ptr->n_col_blocks * 4;
+      uint8_t* sf_ptr = reinterpret_cast<uint8_t*>(ptr_scale_factor);
+      for (int i = covered_flat; i < params_ptr->padded_sf_elems; ++i) {
+        int dr = i / total_sf_cols;
+        int dc = i % total_sf_cols;
+        int off = (dr / 128) * params_ptr->n_col_blocks * 512
+                + (dc / 4) * 512
+                + (dr % 32) * 16
+                + ((dr % 128) / 32) * 4
+                + dc % 4;
+        sf_ptr[off] = 0;
+      }
+    }
 
     return ConsumerStoreCallbacks(
       cute::move(tCrSFD),
@@ -403,7 +475,12 @@ struct Sm100BlockScaleFactorRowStore {
       params_ptr,
       epi_tile_coord_mn,
       norm_constant,
-      norm_constant_scaled_down);
+      norm_constant_scaled_down,
+      params_ptr->n_col_blocks,
+      params_ptr->groups_per_row,
+      sf_cols_per_group,
+      n_sf_tiles_kernel,
+      reinterpret_cast<uint8_t*>(ptr_scale_factor));
 
   }
 };
@@ -433,6 +510,9 @@ struct Sm100BlockScaleFactorRowStoreNv {
     ElementBlockScaleFactor* ptr_scale_factor = nullptr;
     ElementCompute const* norm_constant_ptr = nullptr;
     NormalConstStrideMNL norm_constant_stride = {};
+    int n_col_blocks = 1;
+    int groups_per_row = 1;
+    int padded_sf_elems = 0;
   };
 
   using Params = Arguments;
@@ -513,7 +593,12 @@ struct Sm100BlockScaleFactorRowStoreNv {
           Params const* params_ptr_,
           EpiTileCoordMN epi_tile_coord_mn_,    // (epi_tile_coord_m, epi_tile_coord_n)
           ElementType norm_constant_,
-          ElementType norm_constant_scaled_down_)
+          ElementType norm_constant_scaled_down_,
+          int n_col_blocks_,
+          int groups_per_row_,
+          int sf_cols_per_group_,
+          int n_sf_tiles_kernel_,
+          uint8_t* raw_sf_ptr_)
       : tC_rSFD(cute::forward<RTensor>(tC_rSFD_))
       , tC_gSFD(cute::forward<GTensor>(tC_gSFD_))
       , tC_cSFD(tC_cSFD_)
@@ -521,7 +606,12 @@ struct Sm100BlockScaleFactorRowStoreNv {
       , params_ptr(params_ptr_)
       , norm_constant(norm_constant_)
       , norm_constant_scaled_down(norm_constant_scaled_down_)
-      , epi_tile_coord_mn(epi_tile_coord_mn_){}
+      , epi_tile_coord_mn(epi_tile_coord_mn_)
+      , n_col_blocks(n_col_blocks_)
+      , groups_per_row(groups_per_row_)
+      , sf_cols_per_group(sf_cols_per_group_)
+      , n_sf_tiles_kernel(n_sf_tiles_kernel_)
+      , raw_sf_ptr(raw_sf_ptr_){}
 
     static_assert(is_same_v<ElementType, ElementCompute>);
     RTensor tC_rSFD;
@@ -532,6 +622,11 @@ struct Sm100BlockScaleFactorRowStoreNv {
     ElementCompute norm_constant;
     ElementCompute norm_constant_scaled_down;
     EpiTileCoordMN epi_tile_coord_mn;
+    int n_col_blocks;
+    int groups_per_row;
+    int sf_cols_per_group;
+    int n_sf_tiles_kernel;
+    uint8_t* raw_sf_ptr;
 
     template <class ElementAccumulator, class ElementInput, int FragmentSize>
     CUTLASS_DEVICE auto
@@ -583,8 +678,36 @@ struct Sm100BlockScaleFactorRowStoreNv {
       Tensor tCcSFD_pred = tC_cSFD(_,_,_, epi_m, epi_n);
       CUTLASS_PRAGMA_UNROLL
       for (int i = 0; i < size(tCrSFD_vec); i++){
+        auto* vec_base = cute::raw_pointer_cast(tCgSFD_vec.data());
+        int kb = int((reinterpret_cast<uint8_t*>(vec_base) - raw_sf_ptr))
+               + int(tCgSFD_vec.layout()(i)) * int(sizeof(VecType));
+
+        int stride_m = n_sf_tiles_kernel * 512;
+        int M_tile = kb / stride_m;
+        int rem = kb % stride_m;
+        int K_tile = rem / 512;
+        int within = rem % 512;
+        int c_in_block = within % 4;
+        int idx = within / 4;
+        int m_within = (idx & 3) * 32 + idx / 4;
+        int m_k = M_tile * 128 + m_within;
+        int c_k = K_tile * 4 + c_in_block;
+
+        int flat_sf = m_k * sf_cols_per_group + c_k;
+        int total_sf_cols = n_col_blocks * 4;
+        int data_row = flat_sf / total_sf_cols;
+        int data_col = flat_sf % total_sf_cols;
+
+        int data_offset = (data_row / 128) * n_col_blocks * 512
+                        + (data_col / 4) * 512
+                        + (data_row % 32) * 16
+                        + ((data_row % 128) / 32) * 4
+                        + data_col % 4;
+
         if (elem_less(tCcSFD_pred(i * SFVecSize * V), residue_tC_cSFD)) {
-        tCgSFD_vec(i) = tCrSFD_vec(i);
+          *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = tCrSFD_vec(i);
+        } else {
+          *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = VecType(0);
         }
       }
       /// Step3: Compute quantized output values
@@ -614,8 +737,11 @@ struct Sm100BlockScaleFactorRowStoreNv {
 
     auto epi_tile_mn = shape<1>(zipped_divide(make_layout(take<0,2>(args.tile_shape_mnk)), args.epi_tile));
 
+    // Use SfKMajorAtom to write scale factors directly in blocked (TMEM) layout,
+    // fusing the to_blocked() reordering into the epilogue store.
+    using BlockedSfAtom = typename cutlass::detail::qutlass::Sm1xxBlockScaledBasicChunk<SFVecSize>::SfKMajorAtom;
     Tensor mSFD = make_tensor(make_gmem_ptr(ptr_scale_factor),
-                                                    Sm1xxBlockScaledOutputConfig::tile_atom_to_shape_SFD(args.problem_shape_mnkl));
+                             tile_to_shape(BlockedSfAtom{}, make_shape(M, N, L), Step<_2,_1,_3>{}));
 
     static_assert(size<1>(EpilogueTile{}) && ((size<1>(EpilogueTile{}) & (size<1>(EpilogueTile{}) - 1)) == 0), "Epilogue Tile N should be pow of 2");
     Tensor gSFD = local_tile(mSFD, args.epi_tile, make_coord(_,_,tile_coord_l));                   // (EPI_M,EPI_N, #EPI_Ms, #EPI_Ns)
@@ -646,6 +772,28 @@ struct Sm100BlockScaleFactorRowStoreNv {
     }
 #endif
 
+    int sf_cols_per_group = N / SFVecSize;
+    int n_sf_tiles_kernel = sf_cols_per_group / 4;
+
+    // Inline zero-init: last M tile zeros SF padding beyond tile coverage
+    int cta_m = size<0>(args.tile_shape_mnk);
+    int num_tiles_m = (int(M) + cta_m - 1) / cta_m;
+    if (tile_coord_m == num_tiles_m - 1 && tile_coord_n == 0 && args.thread_idx == 0) {
+      int covered_flat = num_tiles_m * cta_m * sf_cols_per_group;
+      int total_sf_cols = params_ptr->n_col_blocks * 4;
+      uint8_t* sf_ptr = reinterpret_cast<uint8_t*>(ptr_scale_factor);
+      for (int i = covered_flat; i < params_ptr->padded_sf_elems; ++i) {
+        int dr = i / total_sf_cols;
+        int dc = i % total_sf_cols;
+        int off = (dr / 128) * params_ptr->n_col_blocks * 512
+                + (dc / 4) * 512
+                + (dr % 32) * 16
+                + ((dr % 128) / 32) * 4
+                + dc % 4;
+        sf_ptr[off] = 0;
+      }
+    }
+
     return ConsumerStoreCallbacks(
       cute::move(tCrSFD),
       cute::move(tCgSFD),
@@ -654,7 +802,12 @@ struct Sm100BlockScaleFactorRowStoreNv {
       params_ptr,
       epi_tile_coord_mn,
       norm_constant,
-      norm_constant_scaled_down);
+      norm_constant_scaled_down,
+      params_ptr->n_col_blocks,
+      params_ptr->groups_per_row,
+      sf_cols_per_group,
+      n_sf_tiles_kernel,
+      reinterpret_cast<uint8_t*>(ptr_scale_factor));
 
   }
 };

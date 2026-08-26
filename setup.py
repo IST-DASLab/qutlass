@@ -63,6 +63,8 @@ def get_cuda_arch_flags():
         "arch=compute_120a,code=sm_120a",
         "-gencode",
         "arch=compute_100a,code=sm_100a",
+        "-gencode",
+        "arch=compute_103a,code=sm_103a",
     ]
     # Thor / GB10 (SM 10.1, renamed SM 11.0 in CUDA 13.0) shares the SM100
     # tcgen05 block-scaled fp4 path. Only relevant when building on such a

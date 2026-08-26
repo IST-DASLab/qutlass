@@ -74,7 +74,8 @@ struct GemmRunner {
     torch::stable::Tensor const& y,
     int32_t M, int32_t N, int32_t K,
     torch::stable::Device device,
-    torch::stable::Tensor const& global_scale)
+    torch::stable::Tensor const& global_scale,
+    int n_col_blocks = 1)
   {
 
     using GemmCoord = cutlass::gemm::GemmCoord;
@@ -90,11 +91,14 @@ struct GemmRunner {
       {static_cast<cutlass::float_e2m1_t*>(out.mutable_data_ptr()), N},
       {static_cast<cutlass::float_ue4m3_t*>(out_sf.mutable_data_ptr()), M},
       static_cast<ElementAccumulator*>(const_cast<void*>(global_scale.const_data_ptr())),
+      n_col_blocks,
+      (int)out_sf.numel(),
       cutlass::bfloat16_t(0) //TODO (later): float
     };
 
     const torch::stable::accelerator::DeviceGuard device_guard(x.get_device_index());
     cudaStream_t stream = get_current_cuda_stream(device.index());
+
 
     CUTLASS_CHECK(gemmOp.initialize(arguments, nullptr, stream));
 
@@ -121,7 +125,8 @@ void fusedQuantizeNvQuest_host(torch::stable::Tensor& D,
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 16>> runGemm;
-  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
+  int n_col_blocks = D_sf.size(1) / 4;
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
 }
 
 void fusedQuantizeNvQuestHad32_host(torch::stable::Tensor& D,
@@ -139,7 +144,8 @@ void fusedQuantizeNvQuestHad32_host(torch::stable::Tensor& D,
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 32>> runGemm;
-  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
+  int n_col_blocks = D_sf.size(1) / 4;
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
 }
 
 void fusedQuantizeNvQuestHad64_host(torch::stable::Tensor& D,
@@ -157,7 +163,8 @@ void fusedQuantizeNvQuestHad64_host(torch::stable::Tensor& D,
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 64>> runGemm;
-  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
+  int n_col_blocks = D_sf.size(1) / 4;
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
 }
 
 void fusedQuantizeNvQuestHad128_host(torch::stable::Tensor& D,
@@ -175,7 +182,8 @@ void fusedQuantizeNvQuestHad128_host(torch::stable::Tensor& D,
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 128>> runGemm;
-  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
+  int n_col_blocks = D_sf.size(1) / 4;
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
 }
 
 void fusedQuantizeNvAbsMax_host(torch::stable::Tensor& D,
@@ -193,7 +201,8 @@ void fusedQuantizeNvAbsMax_host(torch::stable::Tensor& D,
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 16>> runGemm;
-  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
+  int n_col_blocks = D_sf.size(1) / 4;
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
 }
 
 void fusedQuantizeNvAbsMaxHad32_host(torch::stable::Tensor& D,
@@ -211,7 +220,8 @@ void fusedQuantizeNvAbsMaxHad32_host(torch::stable::Tensor& D,
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 32>> runGemm;
-  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
+  int n_col_blocks = D_sf.size(1) / 4;
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
 }
 
 void fusedQuantizeNvAbsMaxHad64_host(torch::stable::Tensor& D,
@@ -229,7 +239,8 @@ void fusedQuantizeNvAbsMaxHad64_host(torch::stable::Tensor& D,
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 64>> runGemm;
-  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
+  int n_col_blocks = D_sf.size(1) / 4;
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
 }
 
 void fusedQuantizeNvAbsMaxHad128_host(torch::stable::Tensor& D,
@@ -247,7 +258,8 @@ void fusedQuantizeNvAbsMaxHad128_host(torch::stable::Tensor& D,
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
   GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 128>> runGemm;
-  bool result = runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale);
+  int n_col_blocks = D_sf.size(1) / 4;
+  runGemm.run(D, D_sf, A, B, M, N, K, A.device(), global_scale, n_col_blocks);
 }
 
 } // namespace QUTLASS

@@ -1162,7 +1162,6 @@ public:
     //
     // BEGIN EPILOGUE
     //
-
     cst_callbacks.begin();
     if (cst_callbacks.begin_sync_needed()) {
       synchronize();

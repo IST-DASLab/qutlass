@@ -69,62 +69,44 @@ using MmaTileShape_MNK = Shape<_128,_128,_128>;
 using ClusterShape_MNK = Shape<_1,_1,_1>;
 using PerSmTileShape_MNK = Shape<_128,_128,_128>;
 
-using FusionOperation =
-cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactor<
-    OutputSFVectorSize,
-    ElementD,
-    ElementCompute,
-    ElementSFD, LayoutSFDTag,
-    ElementC>;
+template <bool SfSwizzled>
+struct GemmConfig {
+  using FusionOperation =
+      cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactor<
+          OutputSFVectorSize, ElementD, ElementCompute, ElementSFD,
+          LayoutSFDTag, ElementC, ElementCompute,
+          cutlass::FloatRoundStyle::round_to_nearest, SfSwizzled>;
 
-using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilderQutlass<
-    ArchTag, OperatorClass,
-    PerSmTileShape_MNK, ClusterShape_MNK,
-    cutlass::epilogue::collective::EpilogueTileAutoQutlass,
-    //cute::Shape<_32,_64>,
-    ElementAccumulator, ElementAccumulator,
-    ElementC, LayoutC, AlignmentC,
-    ElementD, LayoutD, AlignmentD,
-    cutlass::epilogue::collective::EpilogueScheduleAutoQutlass,
-    FusionOperation
-  >::CollectiveOp;
+  using CollectiveEpilogue = typename cutlass::epilogue::collective::CollectiveBuilderQutlass<
+      ArchTag, OperatorClass, PerSmTileShape_MNK, ClusterShape_MNK,
+      cutlass::epilogue::collective::EpilogueTileAutoQutlass,
+      ElementAccumulator, ElementAccumulator, ElementC, LayoutC, AlignmentC,
+      ElementD, LayoutD, AlignmentD,
+      cutlass::epilogue::collective::EpilogueScheduleAutoQutlass,
+      FusionOperation>::CollectiveOp;
 
-using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
-    ArchTag, OperatorClass,
-    ElementA, LayoutA, AlignmentA,
-    ElementB, LayoutB, AlignmentB,
-    ElementAccumulator,
-    MmaTileShape_MNK, ClusterShape_MNK,
-    cutlass::gemm::collective::StageCountAutoCarveout<static_cast<int>(sizeof(typename CollectiveEpilogue::SharedStorage))>,
-    cutlass::gemm::collective::KernelScheduleAuto
-    //cutlass::gemm::KernelTmaWarpSpecializedPingpong
-  >::CollectiveOp;
+  using CollectiveMainloop = typename cutlass::gemm::collective::CollectiveBuilder<
+      ArchTag, OperatorClass, ElementA, LayoutA, AlignmentA,
+      ElementB, LayoutB, AlignmentB, ElementAccumulator,
+      MmaTileShape_MNK, ClusterShape_MNK,
+      cutlass::gemm::collective::StageCountAutoCarveout<
+          static_cast<int>(sizeof(typename CollectiveEpilogue::SharedStorage))>,
+      cutlass::gemm::collective::KernelScheduleAuto>::CollectiveOp;
 
-using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
-    Shape<int,int,int, int>,
-    CollectiveMainloop,
-    CollectiveEpilogue,
-    void>;
+  using GemmKernel = cutlass::gemm::kernel::GemmUniversal<
+      Shape<int,int,int,int>, CollectiveMainloop, CollectiveEpilogue, void>;
+  using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
+};
 
-using Gemm = cutlass::gemm::device::GemmUniversalAdapter<GemmKernel>;
-
-using StrideA = typename Gemm::GemmKernel::StrideA;
-using StrideB = typename Gemm::GemmKernel::StrideB;
-using StrideC = typename Gemm::GemmKernel::StrideC;
-using StrideD = typename Gemm::GemmKernel::StrideD;
-
-using FusionOp = typename Gemm::EpilogueOutputOp;
-constexpr bool IsBlockScaleSupported = FusionOp::IsBlockScaleSupported;
-using SfdOutputCfg = cutlass::detail::Sm1xxBlockScaledOutputConfig<OutputSFVectorSize>;
-using LayoutSFD = typename SfdOutputCfg::LayoutSF;
-
-typename Gemm::Arguments args_from_options(torch::stable::Tensor& D,
+template <bool SfSwizzled>
+typename GemmConfig<SfSwizzled>::Gemm::Arguments args_from_options(torch::stable::Tensor& D,
                                            torch::stable::Tensor& D_sf,
                                            torch::stable::Tensor const& A,
                                            torch::stable::Tensor const& B,
                                            torch::stable::Tensor const& global_scale,
                                            int32_t M, int32_t N, int32_t K)
 {
+    using Gemm = typename GemmConfig<SfSwizzled>::Gemm;
     using ElementA       = typename Gemm::ElementA;
     using ElementB       = typename Gemm::ElementB;
     using ElementC       = typename Gemm::ElementC;
@@ -154,17 +136,16 @@ typename Gemm::Arguments args_from_options(torch::stable::Tensor& D,
         }
     };
 
-    if constexpr (IsBlockScaleSupported) {
-        arguments.epilogue.thread.block_scale_factor_ptr = static_cast<cutlass::float_ue8m0_t*>(D_sf.mutable_data_ptr());
-        arguments.epilogue.thread.norm_constant_ptr      = static_cast<ElementAccumulator const*>(global_scale.const_data_ptr());
-        arguments.epilogue.thread.n_col_blocks    = D_sf.size(1) / 4;
-        arguments.epilogue.thread.groups_per_row  = A.size(-1) / N;
-        arguments.epilogue.thread.padded_sf_elems = D_sf.numel();
-    }
+    arguments.epilogue.thread.block_scale_factor_ptr = static_cast<cutlass::float_ue8m0_t*>(D_sf.mutable_data_ptr());
+    arguments.epilogue.thread.norm_constant_ptr      = static_cast<ElementAccumulator const*>(global_scale.const_data_ptr());
+    arguments.epilogue.thread.n_col_blocks    = D_sf.size(1) / 4;
+    arguments.epilogue.thread.groups_per_row  = A.size(-1) / N;
+    arguments.epilogue.thread.padded_sf_elems = D_sf.numel();
 
     return arguments;
 }
 
+template <bool SfSwizzled>
 void runGemm(torch::stable::Tensor& D,
              torch::stable::Tensor& D_sf,
              torch::stable::Tensor const& A,
@@ -173,10 +154,11 @@ void runGemm(torch::stable::Tensor& D,
              int32_t M, int32_t N, int32_t K,
              torch::stable::Device device)
 {
+    using Gemm = typename GemmConfig<SfSwizzled>::Gemm;
     Gemm gemm;
 
     auto arguments =
-        args_from_options(D, D_sf, A, B, global_scale, M, N, K);
+        args_from_options<SfSwizzled>(D, D_sf, A, B, global_scale, M, N, K);
 
     size_t workspace_size = Gemm::get_workspace_size(arguments);
 
@@ -196,14 +178,19 @@ void fusedQuantizeMxAbsMax_host_sm100(torch::stable::Tensor& D,
                                       torch::stable::Tensor& D_sf,
                                       torch::stable::Tensor const& A,
                                       torch::stable::Tensor const& B,
-                                      torch::stable::Tensor const& global_scale)
+                                      torch::stable::Tensor const& global_scale,
+                                      bool is_sf_swizzled_layout)
 {
 #if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110
     int32_t M = A.numel() / 128;
     int32_t N = B.size(1);
     int32_t K = 128;
 
-    runGemm(D, D_sf, A, B, global_scale, M, N, K, A.device());
+    if (is_sf_swizzled_layout) {
+        runGemm<true>(D, D_sf, A, B, global_scale, M, N, K, A.device());
+    } else {
+        runGemm<false>(D, D_sf, A, B, global_scale, M, N, K, A.device());
+    }
 #else
     STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif

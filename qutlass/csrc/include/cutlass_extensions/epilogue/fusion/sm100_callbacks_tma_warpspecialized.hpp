@@ -67,10 +67,11 @@ template<
   class ElementBlockScaleFactor,
   class ElementSource = ElementOutput,
   class ElementScalar = ElementCompute,
-  FloatRoundStyle RoundStyle = FloatRoundStyle::round_to_nearest
+  FloatRoundStyle RoundStyle = FloatRoundStyle::round_to_nearest,
+  bool SfSwizzled = true
 >
 using Sm100QutlassLinearCombRowBlockScaleFactor =
-  Sm90EVT<Sm100BlockScaleFactorRowStore<SFVecsize, EpilogueTile, ElementOutput, ElementCompute, ElementBlockScaleFactor, RoundStyle>, // gen scalefactor
+  Sm90EVT<Sm100BlockScaleFactorRowStore<SFVecsize, EpilogueTile, ElementOutput, ElementCompute, ElementBlockScaleFactor, RoundStyle, SfSwizzled>, // gen scalefactor
     Sm90LinearCombination<ElementCompute, ElementCompute, ElementSource, ElementScalar, RoundStyle> // beta * C + (alpha * acc)
   >;
 
@@ -87,18 +88,19 @@ template <
   class ElementSource,
   class ElementScalar,
   FloatRoundStyle RoundStyle,
+  bool SfSwizzled,
   class CtaTileShapeMNK,
   class EpilogueTile
 >
 struct FusionCallbacks<
     cutlass::epilogue::Sm100TmaWarpSpecialized<StagesC, StagesD, FragmentSize, ReuseSmemC, DelayTmaStore>,
-    cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactor<SFVecSize, ElementOutput, ElementCompute, ElementBlockScaleFactor, cutlass::layout::RowMajor, ElementSource, ElementScalar, RoundStyle>,
+    cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactor<SFVecSize, ElementOutput, ElementCompute, ElementBlockScaleFactor, cutlass::layout::RowMajor, ElementSource, ElementScalar, RoundStyle, SfSwizzled>,
     CtaTileShapeMNK,
     EpilogueTile
-> : Sm100QutlassLinearCombRowBlockScaleFactor<SFVecSize, EpilogueTile, typename cutlass::detail::get_unpacked_element_type<ElementOutput>::type, ElementCompute, ElementBlockScaleFactor, ElementSource, ElementScalar, RoundStyle> {
+> : Sm100QutlassLinearCombRowBlockScaleFactor<SFVecSize, EpilogueTile, typename cutlass::detail::get_unpacked_element_type<ElementOutput>::type, ElementCompute, ElementBlockScaleFactor, ElementSource, ElementScalar, RoundStyle, SfSwizzled> {
 
-  using Impl =  Sm100QutlassLinearCombRowBlockScaleFactor<SFVecSize, EpilogueTile, typename cutlass::detail::get_unpacked_element_type<ElementOutput>::type, ElementCompute, ElementBlockScaleFactor, ElementSource, ElementScalar, RoundStyle>;
-  using Operation = cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactor<SFVecSize, ElementOutput, ElementCompute, ElementBlockScaleFactor, cutlass::layout::RowMajor, ElementSource, ElementScalar, RoundStyle>;
+  using Impl =  Sm100QutlassLinearCombRowBlockScaleFactor<SFVecSize, EpilogueTile, typename cutlass::detail::get_unpacked_element_type<ElementOutput>::type, ElementCompute, ElementBlockScaleFactor, ElementSource, ElementScalar, RoundStyle, SfSwizzled>;
+  using Operation = cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactor<SFVecSize, ElementOutput, ElementCompute, ElementBlockScaleFactor, cutlass::layout::RowMajor, ElementSource, ElementScalar, RoundStyle, SfSwizzled>;
 
   struct Arguments {
     ElementScalar alpha = ElementScalar(1);
@@ -153,10 +155,11 @@ template<
   class ElementBlockScaleFactor,
   class ElementSource = ElementOutput,
   class ElementScalar = ElementCompute,
-  FloatRoundStyle RoundStyle = FloatRoundStyle::round_to_nearest
+  FloatRoundStyle RoundStyle = FloatRoundStyle::round_to_nearest,
+  bool SfSwizzled = true
 >
 using Sm100QutlassLinearCombRowBlockScaleFactorNv =
-  Sm90EVT<Sm100BlockScaleFactorRowStoreNv<SFVecsize, EpilogueTile, ElementOutput, ElementCompute, ElementBlockScaleFactor, RoundStyle>, // gen scalefactor
+  Sm90EVT<Sm100BlockScaleFactorRowStoreNv<SFVecsize, EpilogueTile, ElementOutput, ElementCompute, ElementBlockScaleFactor, RoundStyle, SfSwizzled>, // gen scalefactor
     Sm90LinearCombination<ElementCompute, ElementCompute, ElementSource, ElementScalar, RoundStyle> // beta * C + (alpha * acc)
   >;
 
@@ -173,18 +176,19 @@ template <
   class ElementSource,
   class ElementScalar,
   FloatRoundStyle RoundStyle,
+  bool SfSwizzled,
   class CtaTileShapeMNK,
   class EpilogueTile
 >
 struct FusionCallbacks<
     cutlass::epilogue::Sm100TmaWarpSpecialized<StagesC, StagesD, FragmentSize, ReuseSmemC, DelayTmaStore>,
-    cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactorNv<SFVecSize, ElementOutput, ElementCompute, ElementBlockScaleFactor, cutlass::layout::RowMajor, ElementSource, ElementScalar, RoundStyle>,
+    cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactorNv<SFVecSize, ElementOutput, ElementCompute, ElementBlockScaleFactor, cutlass::layout::RowMajor, ElementSource, ElementScalar, RoundStyle, SfSwizzled>,
     CtaTileShapeMNK,
     EpilogueTile
-> : Sm100QutlassLinearCombRowBlockScaleFactorNv<SFVecSize, EpilogueTile, typename cutlass::detail::get_unpacked_element_type<ElementOutput>::type, ElementCompute, ElementBlockScaleFactor, ElementSource, ElementScalar, RoundStyle> {
+> : Sm100QutlassLinearCombRowBlockScaleFactorNv<SFVecSize, EpilogueTile, typename cutlass::detail::get_unpacked_element_type<ElementOutput>::type, ElementCompute, ElementBlockScaleFactor, ElementSource, ElementScalar, RoundStyle, SfSwizzled> {
 
-  using Impl =  Sm100QutlassLinearCombRowBlockScaleFactorNv<SFVecSize, EpilogueTile, typename cutlass::detail::get_unpacked_element_type<ElementOutput>::type, ElementCompute, ElementBlockScaleFactor, ElementSource, ElementScalar, RoundStyle>;
-  using Operation = cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactorNv<SFVecSize, ElementOutput, ElementCompute, ElementBlockScaleFactor, cutlass::layout::RowMajor, ElementSource, ElementScalar, RoundStyle>;
+  using Impl =  Sm100QutlassLinearCombRowBlockScaleFactorNv<SFVecSize, EpilogueTile, typename cutlass::detail::get_unpacked_element_type<ElementOutput>::type, ElementCompute, ElementBlockScaleFactor, ElementSource, ElementScalar, RoundStyle, SfSwizzled>;
+  using Operation = cutlass::epilogue::fusion::qutlass::QutlassLinCombBlockScaleFactorNv<SFVecSize, ElementOutput, ElementCompute, ElementBlockScaleFactor, cutlass::layout::RowMajor, ElementSource, ElementScalar, RoundStyle, SfSwizzled>;
 
   struct Arguments {
     ElementScalar alpha = ElementScalar(1);

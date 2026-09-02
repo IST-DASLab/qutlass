@@ -275,6 +275,28 @@ def test_llama_shapes(model: str, layer_idx: int, batch: int, rot_size: int, bac
     assert out.equal(out_ref.to(dtype=out.dtype))
 
 
+@pytest.mark.parametrize("rot_size", ROT_SIZES)
+@pytest.mark.parametrize("method", ["quest", "abs_max"])
+@torch.inference_mode()
+def test_row_major_sf_compatibility(rot_size: int, method: str):
+    """The legacy row-major request round-trips to the direct blocked layout."""
+    rows, groups_per_row = 129, 3  # exercise row and SF-column padding
+    h = get_hadamard_matrix(rot_size, DTYPE, DEVICE)
+    a = torch.randn(rows, rot_size * groups_per_row, dtype=DTYPE, device=DEVICE)
+    global_scale = torch.tensor([1.0], device=DEVICE)
+
+    _, sf_row_major = fusedQuantizeNv(
+        a, h, global_scale, method=method, is_sf_swizzled_layout=False
+    )
+    _, sf_blocked = fusedQuantizeNv(
+        a, h, global_scale, method=method, is_sf_swizzled_layout=True
+    )
+
+    assert to_blocked(sf_row_major, use_triton_kernel=True).view(torch.uint8).equal(
+        sf_blocked.view(torch.uint8)
+    )
+
+
 @pytest.mark.parametrize("rows", [1, 127, 128, 129, 255, 256, 257])
 @pytest.mark.parametrize("global_scale_value", [1.0, 6.0])
 @pytest.mark.parametrize("rot_size", ROT_SIZES)

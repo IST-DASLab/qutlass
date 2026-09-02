@@ -146,14 +146,14 @@ def matmul_mxf8_bf16_nn(a: torch.Tensor,
     return qutlass_CUDA.matmul_mxf8_bf16_nn(a, b, block_scale_a, block_scale_b, alpha)
 
 
-def _format_blocked_sf(sf: torch.Tensor, is_swizzled: bool) -> torch.Tensor:
-    """Return the in-kernel blocked SF layout expected by the GEMM kernels."""
-    if not is_swizzled:
-        raise ValueError(
-            "row-major scale-factor output is no longer supported; "
-            "the fused quantization kernels write blocked scale factors directly"
-        )
-    return sf.flatten()
+def _format_mx_sf(sf: torch.Tensor, is_swizzled: bool) -> torch.Tensor:
+    """MX kernels natively produce the requested SF layout."""
+    return sf.flatten() if is_swizzled else sf
+
+
+def _format_nv_sf(sf: torch.Tensor, is_swizzled: bool) -> torch.Tensor:
+    """NV kernels natively produce the requested SF layout."""
+    return sf.flatten() if is_swizzled else sf
 
 
 def fusedQuantizeMx(
@@ -181,19 +181,23 @@ def fusedQuantizeMx(
                 *a.shape[:-1], a.size(-1) // 8, dtype=torch.uint8, device=a.device
             )
             fp4, sf, mask = qutlass_CUDA.fusedQuantizeMxQuestWithMask(
-                a, b, xh_e2m1, xh_e8m0, clip_mask
+                a, b, xh_e2m1, xh_e8m0, clip_mask, is_sf_swizzled_layout
             )
-            return fp4, _format_blocked_sf(sf, is_sf_swizzled_layout), mask
+            return fp4, _format_mx_sf(sf, is_sf_swizzled_layout), mask
         else:
-            fp4, sf = qutlass_CUDA.fusedQuantizeMxQuest(a, b, xh_e2m1, xh_e8m0)
-            return fp4, _format_blocked_sf(sf, is_sf_swizzled_layout)
+            fp4, sf = qutlass_CUDA.fusedQuantizeMxQuest(
+                a, b, xh_e2m1, xh_e8m0, is_sf_swizzled_layout
+            )
+            return fp4, _format_mx_sf(sf, is_sf_swizzled_layout)
     elif method == "abs_max":
         if return_mask:
             raise ValueError("return_mask is only supported for method 'quest'")
         if global_scale is None:
             global_scale = torch.full((1,), 3.0, dtype=torch.float32, device=a.device)
-        fp4, sf = qutlass_CUDA.fusedQuantizeMxAbsMax(a, b, xh_e2m1, xh_e8m0, global_scale)
-        return fp4, _format_blocked_sf(sf, is_sf_swizzled_layout)
+        fp4, sf = qutlass_CUDA.fusedQuantizeMxAbsMax(
+            a, b, xh_e2m1, xh_e8m0, global_scale, is_sf_swizzled_layout
+        )
+        return fp4, _format_mx_sf(sf, is_sf_swizzled_layout)
     else:
         raise ValueError(f"invalid method {method!r}, must be 'quest' or 'abs_max'")
 
@@ -215,11 +219,15 @@ def fusedQuantizeNv(
     )
 
     if method == "quest":
-        fp4, sf = qutlass_CUDA.fusedQuantizeNvQuest(a, b, xh_e2m1, xh_e4m3, global_scale)
-        return fp4, _format_blocked_sf(sf, is_sf_swizzled_layout)
+        fp4, sf = qutlass_CUDA.fusedQuantizeNvQuest(
+            a, b, xh_e2m1, xh_e4m3, global_scale, is_sf_swizzled_layout
+        )
+        return fp4, _format_nv_sf(sf, is_sf_swizzled_layout)
     elif method == "abs_max":
-        fp4, sf = qutlass_CUDA.fusedQuantizeNvAbsMax(a, b, xh_e2m1, xh_e4m3, global_scale)
-        return fp4, _format_blocked_sf(sf, is_sf_swizzled_layout)
+        fp4, sf = qutlass_CUDA.fusedQuantizeNvAbsMax(
+            a, b, xh_e2m1, xh_e4m3, global_scale, is_sf_swizzled_layout
+        )
+        return fp4, _format_nv_sf(sf, is_sf_swizzled_layout)
     else:
         raise ValueError(f"invalid method {method!r}, must be 'quest' or 'abs_max'")
 

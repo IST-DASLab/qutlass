@@ -137,7 +137,30 @@ static float reciprocal_approximate_ftz(float a) {
 }
 
 CUTLASS_DEVICE
-static void zero_blocked_sf_padding(
+static int blocked_sf_offset(int flat, int n_col_blocks, int logical_sf_cols) {
+  int sf_row = flat / logical_sf_cols;
+  int sf_col = flat % logical_sf_cols;
+  return (sf_row / 128) * (n_col_blocks * 512)
+       + (sf_col / 4) * 512
+       + (sf_row % 32) * 16
+       + ((sf_row % 128) / 32) * 4
+       + sf_col % 4;
+}
+
+template <bool SfSwizzled>
+CUTLASS_DEVICE
+static int sf_offset(int flat, int n_col_blocks, int logical_sf_cols) {
+  if constexpr (SfSwizzled) {
+    return blocked_sf_offset(flat, n_col_blocks, logical_sf_cols);
+  }
+  int sf_row = flat / logical_sf_cols;
+  int sf_col = flat % logical_sf_cols;
+  return sf_row * (n_col_blocks * 4) + sf_col;
+}
+
+template <bool SfSwizzled>
+CUTLASS_DEVICE
+static void zero_sf_padding(
     uint8_t* sf_ptr,
     int padded_sf_elems,
     int n_col_blocks,
@@ -153,14 +176,29 @@ static void zero_blocked_sf_padding(
     int sf_row = flat / padded_sf_cols;
     int sf_col = flat % padded_sf_cols;
     if (sf_row >= logical_sf_rows || sf_col >= logical_sf_cols) {
-      int offset = (sf_row / 128) * (n_col_blocks * 512)
-                 + (sf_col / 4) * 512
-                 + (sf_row % 32) * 16
-                 + ((sf_row % 128) / 32) * 4
-                 + sf_col % 4;
-      sf_ptr[offset] = 0;
+      if constexpr (SfSwizzled) {
+        int offset = (sf_row / 128) * (n_col_blocks * 512)
+                   + (sf_col / 4) * 512
+                   + (sf_row % 32) * 16
+                   + ((sf_row % 128) / 32) * 4
+                   + sf_col % 4;
+        sf_ptr[offset] = 0;
+      } else {
+        sf_ptr[flat] = 0;
+      }
     }
   }
+}
+
+CUTLASS_DEVICE
+static void zero_blocked_sf_padding(
+    uint8_t* sf_ptr,
+    int padded_sf_elems,
+    int n_col_blocks,
+    int logical_sf_cols,
+    int logical_sf_elems) {
+  zero_sf_padding<true>(sf_ptr, padded_sf_elems, n_col_blocks,
+                        logical_sf_cols, logical_sf_elems);
 }
 
 /// Epilogue operator
@@ -547,11 +585,8 @@ private:
         int row = iter*(32/4) + ((threadIdx.x%32)/4) + (threadIdx.x/32)*(32/4)*OutputTileIterator::kIterations + blockIdx.x*blockDim.x;
 
         float4 *result_ptr  = ((float4 *)D + row); //4=32/8
-        // General blocked address: flat idx = row, n_col_blocks from caller
-        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
-        uint8_t *x_e8m0_ptr = ((uint8_t *)D_sf
-            + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
-            + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
+        { uint8_t *x_e8m0_ptr = reinterpret_cast<uint8_t *>(D_sf)
+            + sf_offset<OutputOp::kSfSwizzled>(row, n_col_blocks, logical_sf_cols);
 
         if((threadIdx.x%4)==0 && row<problem_m_size){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*10); // + iter*(blockDim.x/4)*32); 40=32+8
@@ -619,8 +654,8 @@ private:
         }
         } // close n_col_blocks scope
     }
-    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
-                            n_col_blocks, logical_sf_cols, problem_m_size);
+    zero_sf_padding<OutputOp::kSfSwizzled>(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                                           n_col_blocks, logical_sf_cols, problem_m_size);
   }
 
   template <typename SourceAspect>
@@ -676,11 +711,8 @@ private:
         int row = iter*(32/4)*2 + ((threadIdx.x%32)/4)*2 + (threadIdx.x%32)%2 + (threadIdx.x/32)*(32/4)*2*OutputTileIterator::kIterations + blockIdx.x*blockDim.x*2;
 
         float4 *result_ptr  = ((float4 *)D + row); //4=32/8
-        // row encodes flat scale index; general blocked formula
-        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
-        uint8_t *x_e8m0_ptr = ((uint8_t *)D_sf
-            + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
-            + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
+        { uint8_t *x_e8m0_ptr = reinterpret_cast<uint8_t *>(D_sf)
+            + sf_offset<OutputOp::kSfSwizzled>(row, n_col_blocks, logical_sf_cols);
 
         if((threadIdx.x%4)<2 && row<problem_m_size*2){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*18 + (threadIdx.x%2)*8); // + iter*(blockDim.x/4)*32); 40=32+8
@@ -748,8 +780,8 @@ private:
         }
         } // close n_col_blocks scope
     }
-    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
-                            n_col_blocks, logical_sf_cols, problem_m_size * 2);
+    zero_sf_padding<OutputOp::kSfSwizzled>(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                                           n_col_blocks, logical_sf_cols, problem_m_size * 2);
   }
 
   template <typename SourceAspect>
@@ -808,10 +840,8 @@ private:
         // General blocked address: flat idx = row*4+col, n_col_blocks from caller
         int _col128 = (threadIdx.x % 32) % 4;
         { int _fi = row * 4 + _col128;
-          int _r2 = _fi / logical_sf_cols, _c2 = _fi % logical_sf_cols;
-        uint8_t *x_e8m0_ptr = ((uint8_t *)D_sf
-            + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
-            + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
+        uint8_t *x_e8m0_ptr = reinterpret_cast<uint8_t *>(D_sf)
+            + sf_offset<OutputOp::kSfSwizzled>(_fi, n_col_blocks, logical_sf_cols);
 
         if(row<problem_m_size){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*34 + (threadIdx.x%4)*8 ); // + iter*(blockDim.x/4)*32); 40=32+8
@@ -879,8 +909,8 @@ private:
         }
         } // close n_col_blocks scope
     }
-    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
-                            n_col_blocks, logical_sf_cols, problem_m_size * 4);
+    zero_sf_padding<OutputOp::kSfSwizzled>(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                                           n_col_blocks, logical_sf_cols, problem_m_size * 4);
   }
 
 };
@@ -1215,14 +1245,8 @@ class EpilogueQuantMxMask
         int row = iter*(32/4) + ((threadIdx.x%32)/4) + (threadIdx.x/32)*(32/4)*OutputTileIterator::kIterations + blockIdx.x*blockDim.x;
 
         float4 *result_ptr  = ((float4 *)D + row); //4=32/8
-        int sf_row = row / logical_sf_cols;
-        int sf_col = row % logical_sf_cols;
         uint8_t *x_e8m0_ptr = reinterpret_cast<uint8_t *>(D_sf)
-            + (sf_row / 128) * (n_col_blocks * 512)
-            + (sf_col / 4) * 512
-            + (sf_row % 32) * 16
-            + ((sf_row % 128) / 32) * 4
-            + sf_col % 4;
+            + sf_offset<OutputOp::kSfSwizzled>(row, n_col_blocks, logical_sf_cols);
 
         if((threadIdx.x%4)==0 && row<problem_m_size){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*10);// + iter*(blockDim.x/4)*32); 40=32+8
@@ -1314,8 +1338,8 @@ class EpilogueQuantMxMask
         //++destination_iterator;
     }
 
-    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
-                            n_col_blocks, logical_sf_cols, problem_m_size);
+    zero_sf_padding<OutputOp::kSfSwizzled>(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+                                           n_col_blocks, logical_sf_cols, problem_m_size);
   }
 };
 
@@ -1707,11 +1731,9 @@ private:
         int row = iter*(32/4) + ((threadIdx.x%32)/4) + (threadIdx.x/32)*(32/4)*OutputTileIterator::kIterations + blockIdx.x*blockDim.x;
 
         float2 *result_ptr  = ((float2 *)D + row); //4=32/8
-        // Blocked address for scale factor (same formula as MX op_32)
-        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
-        uint8_t *x_e4m3_ptr = ((uint8_t *)D_sf
-            + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
-            + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
+        { uint8_t *x_e4m3_ptr = reinterpret_cast<uint8_t *>(D_sf)
+            + sf_offset<OutputOp::kSfSwizzled>(
+                row, n_col_blocks, logical_sf_cols);
 
         if((threadIdx.x%4)==0 && row<problem_m_size){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*10); // + iter*(blockDim.x/4)*32); 40=32+8
@@ -1800,8 +1822,9 @@ private:
         }
         } // close n_col_blocks scope
     }
-    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
-                            n_col_blocks, logical_sf_cols, problem_m_size);
+    zero_sf_padding<OutputOp::kSfSwizzled>(
+        reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+        n_col_blocks, logical_sf_cols, problem_m_size);
   }
 
   template <typename SourceAspect>
@@ -1857,11 +1880,9 @@ private:
         int row = iter*(32/4)*2 + ((threadIdx.x%32)/4)*2 + (threadIdx.x%32)%2 + (threadIdx.x/32)*(32/4)*2*OutputTileIterator::kIterations + blockIdx.x*blockDim.x*2;
 
         float2 *result_ptr  = ((float2 *)D + row); //4=32/8
-        // Blocked address for scale factor (same formula as MX op_32)
-        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
-        uint8_t *x_e4m3_ptr = ((uint8_t *)D_sf
-            + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
-            + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
+        { uint8_t *x_e4m3_ptr = reinterpret_cast<uint8_t *>(D_sf)
+            + sf_offset<OutputOp::kSfSwizzled>(
+                row, n_col_blocks, logical_sf_cols);
 
         if((threadIdx.x%4)<2 && row<problem_m_size*2){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*10 + (threadIdx.x%2)*4); // + iter*(blockDim.x/4)*32); 40=32+8
@@ -1950,8 +1971,9 @@ private:
         }
         } // close n_col_blocks scope
     }
-    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
-                            n_col_blocks, logical_sf_cols, problem_m_size * 2);
+    zero_sf_padding<OutputOp::kSfSwizzled>(
+        reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+        n_col_blocks, logical_sf_cols, problem_m_size * 2);
   }
 
   template <typename SourceAspect>
@@ -2007,11 +2029,9 @@ private:
         int row = iter*(32/4)*4 + ((threadIdx.x%32)/4)*4 + (threadIdx.x%32)%4 + (threadIdx.x/32)*(32/4)*4*OutputTileIterator::kIterations + blockIdx.x*blockDim.x*4;
 
         float2 *result_ptr  = ((float2 *)D + row); //4=32/8
-        // Blocked address for scale factor (same formula as MX op_32)
-        { int _r2 = row / logical_sf_cols, _c2 = row % logical_sf_cols;
-        uint8_t *x_e4m3_ptr = ((uint8_t *)D_sf
-            + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
-            + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
+        { uint8_t *x_e4m3_ptr = reinterpret_cast<uint8_t *>(D_sf)
+            + sf_offset<OutputOp::kSfSwizzled>(
+                row, n_col_blocks, logical_sf_cols);
 
         if(row<problem_m_size*4){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*18 + (threadIdx.x%4)*4); // + iter*(blockDim.x/4)*32); 40=32+8
@@ -2100,8 +2120,9 @@ private:
         }
         } // close n_col_blocks scope
     }
-    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
-                            n_col_blocks, logical_sf_cols, problem_m_size * 4);
+    zero_sf_padding<OutputOp::kSfSwizzled>(
+        reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+        n_col_blocks, logical_sf_cols, problem_m_size * 4);
   }
 
   template <typename SourceAspect>
@@ -2158,14 +2179,13 @@ private:
         int row = iter*(32/4)*4 + ((threadIdx.x%32)/4)*4 + (threadIdx.x%32)%4 + (threadIdx.x/32)*(32/4)*4*OutputTileIterator::kIterations + blockIdx.x*blockDim.x*4;
 
         float4 *result_ptr  = ((float4 *)D + row); //4=32/8
-        // Each store contains two adjacent scale factors.
-        { int logical_sf_pairs = logical_sf_cols / 2;
-        int _r2 = row / logical_sf_pairs;
-        int _c2 = (row % logical_sf_pairs) * 2;
+        // Each store contains two adjacent scale factors. `row` indexes pairs,
+        // so convert it to the flat index of the first scale factor.
+        { int sf_flat = row * 2;
         uint16_t *x_e4m3_ptr = reinterpret_cast<uint16_t *>(
             reinterpret_cast<uint8_t *>(D_sf)
-            + (_r2 / 128) * (n_col_blocks * 512) + (_c2 / 4) * 512
-            + (_r2 % 32) * 16 + ((_r2 % 128) / 32) * 4 + _c2 % 4);
+            + sf_offset<OutputOp::kSfSwizzled>(
+                sf_flat, n_col_blocks, logical_sf_cols));
 
         if(row<problem_m_size*4){
             float4 *raw = ((float4*)this->shared_storage_.reference().data() + (threadIdx.x/4)*34 + (threadIdx.x%4)*8); // + iter*(blockDim.x/4)*32); 40=32+8
@@ -2258,8 +2278,9 @@ private:
         }
         } // close n_col_blocks scope
     }
-    zero_blocked_sf_padding(reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
-                            n_col_blocks, logical_sf_cols, problem_m_size * 8);
+    zero_sf_padding<OutputOp::kSfSwizzled>(
+        reinterpret_cast<uint8_t*>(D_sf), padded_sf_elems,
+        n_col_blocks, logical_sf_cols, problem_m_size * 8);
   }
 
 };

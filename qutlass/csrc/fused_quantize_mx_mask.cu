@@ -44,7 +44,19 @@ using LayoutInputA = cutlass::layout::RowMajor;
 using LayoutInputB = cutlass::layout::RowMajor;
 using LayoutOutput = cutlass::layout::RowMajor;
 
-template <typename ShapeMMAThreadBlock, typename ShapeMMAWarp, typename InstructionShape>
+template <bool SfSwizzled>
+using EpilogueOutputOp = cutlass::epilogue::thread::LinearCombinationQuantMxMask<
+    ElementOutput,
+    128 / cutlass::sizeof_bits<ElementGemmOutput>::value,
+    ElementAccumulator,
+    ElementGemmOutput,
+    cutlass::epilogue::thread::MyScaleType::Quantize,
+    cutlass::FloatRoundStyle::round_to_nearest,
+    ElementGemmOutput,
+    SfSwizzled>;
+
+template <typename ShapeMMAThreadBlock, typename ShapeMMAWarp,
+          typename InstructionShape, bool SfSwizzled = true>
 using Gemm_ =
     cutlass::gemm::device::GemmQuantMxMask<
         ElementInputA, LayoutInputA,
@@ -56,7 +68,8 @@ using Gemm_ =
         cutlass::arch::Sm80,
         ShapeMMAThreadBlock,
         ShapeMMAWarp,
-        InstructionShape
+        InstructionShape,
+        EpilogueOutputOp<SfSwizzled>
     >;
 
 template <typename Gemm>
@@ -110,7 +123,8 @@ void fusedQuantizeMxQuestWithMask_host(torch::stable::Tensor& D,
                                        torch::stable::Tensor& D_sf,
                                        torch::stable::Tensor& D_mask,
                                        torch::stable::Tensor const& A,
-                                       torch::stable::Tensor const& B)
+                                       torch::stable::Tensor const& B,
+                                       bool is_sf_swizzled_layout)
 {
   int32_t M = A.numel() / 32;
   int32_t N = B.size(1);
@@ -120,8 +134,13 @@ void fusedQuantizeMxQuestWithMask_host(torch::stable::Tensor& D,
   using WarpShape = typename cutlass::gemm::GemmShape<32, 32, 32>;
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
-  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape>> runGemm;
-  bool result = runGemm.run(D, D_sf, D_mask, A, B, M, N, K, A.device());
+  if (is_sf_swizzled_layout) {
+    GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true>> runner;
+    runner.run(D, D_sf, D_mask, A, B, M, N, K, A.device());
+  } else {
+    GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false>> runner;
+    runner.run(D, D_sf, D_mask, A, B, M, N, K, A.device());
+  }
 }
 
 } // namespace QUTLASS

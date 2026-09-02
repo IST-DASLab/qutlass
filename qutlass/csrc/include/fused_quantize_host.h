@@ -22,100 +22,117 @@ namespace QUTLASS {
 void fusedQuantizeMxQuest_host(torch::stable::Tensor&       D,
                                torch::stable::Tensor&       D_sf,
                                torch::stable::Tensor const& A,
-                               torch::stable::Tensor const& B);
+                               torch::stable::Tensor const& B,
+                               bool is_sf_swizzled_layout);
 
 void fusedQuantizeMxQuestWithMask_host(torch::stable::Tensor&       D,
                                        torch::stable::Tensor&       D_sf,
                                        torch::stable::Tensor&       D_mask,
                                        torch::stable::Tensor const& A,
-                                       torch::stable::Tensor const& B);
+                                       torch::stable::Tensor const& B,
+                                       bool is_sf_swizzled_layout);
 
 void fusedQuantizeMxAbsMax_host(torch::stable::Tensor&       D,
                                 torch::stable::Tensor&       D_sf,
                                 torch::stable::Tensor const& A,
                                 torch::stable::Tensor const& B,
-                                torch::stable::Tensor const& global_scale);
+                                torch::stable::Tensor const& global_scale,
+                                bool is_sf_swizzled_layout);
 
 void fusedQuantizeMxQuestHad64_host(torch::stable::Tensor&       D,
                                     torch::stable::Tensor&       D_sf,
                                     torch::stable::Tensor const& A,
-                                    torch::stable::Tensor const& B);
+                                    torch::stable::Tensor const& B,
+                                    bool is_sf_swizzled_layout);
 
 void fusedQuantizeMxAbsMaxHad64_host(torch::stable::Tensor&       D,
                                      torch::stable::Tensor&       D_sf,
                                      torch::stable::Tensor const& A,
                                      torch::stable::Tensor const& B,
-                                     torch::stable::Tensor const& global_scale);
+                                     torch::stable::Tensor const& global_scale,
+                                     bool is_sf_swizzled_layout);
 
 void fusedQuantizeMxQuestHad128_host(torch::stable::Tensor&       D,
                                      torch::stable::Tensor&       D_sf,
                                      torch::stable::Tensor const& A,
-                                     torch::stable::Tensor const& B);
+                                     torch::stable::Tensor const& B,
+                                     bool is_sf_swizzled_layout);
 
 void fusedQuantizeMxAbsMaxHad128_host(torch::stable::Tensor&       D,
                                       torch::stable::Tensor&       D_sf,
                                       torch::stable::Tensor const& A,
                                       torch::stable::Tensor const& B,
-                                      torch::stable::Tensor const& global_scale);
+                                      torch::stable::Tensor const& global_scale,
+                                      bool is_sf_swizzled_layout);
 
 void fusedQuantizeNvQuest_host(torch::stable::Tensor&       D,
                                torch::stable::Tensor&       D_sf,
                                torch::stable::Tensor const& A,
                                torch::stable::Tensor const& B,
-                               torch::stable::Tensor const& global_scale);
+                               torch::stable::Tensor const& global_scale,
+                               bool is_sf_swizzled_layout);
 
 void fusedQuantizeNvQuestHad32_host(torch::stable::Tensor&       D,
                                     torch::stable::Tensor&       D_sf,
                                     torch::stable::Tensor const& A,
                                     torch::stable::Tensor const& B,
-                                    torch::stable::Tensor const& global_scale);
+                                    torch::stable::Tensor const& global_scale,
+                                    bool is_sf_swizzled_layout);
 
 void fusedQuantizeNvQuestHad64_host(torch::stable::Tensor&       D,
                                     torch::stable::Tensor&       D_sf,
                                     torch::stable::Tensor const& A,
                                     torch::stable::Tensor const& B,
-                                    torch::stable::Tensor const& global_scale);
+                                    torch::stable::Tensor const& global_scale,
+                                    bool is_sf_swizzled_layout);
 
 void fusedQuantizeNvQuestHad128_host(torch::stable::Tensor&       D,
                                      torch::stable::Tensor&       D_sf,
                                      torch::stable::Tensor const& A,
                                      torch::stable::Tensor const& B,
-                                     torch::stable::Tensor const& global_scale);
+                                     torch::stable::Tensor const& global_scale,
+                                     bool is_sf_swizzled_layout);
 
 void fusedQuantizeNvAbsMax_host(torch::stable::Tensor&       D,
                                 torch::stable::Tensor&       D_sf,
                                 torch::stable::Tensor const& A,
                                 torch::stable::Tensor const& B,
-                                torch::stable::Tensor const& global_scale);
+                                torch::stable::Tensor const& global_scale,
+                                bool is_sf_swizzled_layout);
 
 void fusedQuantizeNvAbsMaxHad32_host(torch::stable::Tensor&       D,
                                      torch::stable::Tensor&       D_sf,
                                      torch::stable::Tensor const& A,
                                      torch::stable::Tensor const& B,
-                                     torch::stable::Tensor const& global_scale);
+                                     torch::stable::Tensor const& global_scale,
+                                     bool is_sf_swizzled_layout);
 
 void fusedQuantizeNvAbsMaxHad64_host(torch::stable::Tensor&       D,
                                      torch::stable::Tensor&       D_sf,
                                      torch::stable::Tensor const& A,
                                      torch::stable::Tensor const& B,
-                                     torch::stable::Tensor const& global_scale);
+                                     torch::stable::Tensor const& global_scale,
+                                     bool is_sf_swizzled_layout);
 
 void fusedQuantizeNvAbsMaxHad128_host(torch::stable::Tensor&       D,
                                       torch::stable::Tensor&       D_sf,
                                       torch::stable::Tensor const& A,
                                       torch::stable::Tensor const& B,
-                                      torch::stable::Tensor const& global_scale);
+                                      torch::stable::Tensor const& global_scale,
+                                      bool is_sf_swizzled_layout);
 
 void fusedQuantizeMxAbsMax_host_sm100(torch::stable::Tensor&       D,
                                       torch::stable::Tensor&       D_sf,
                                       torch::stable::Tensor const& A,
                                       torch::stable::Tensor const& B,
-                                      torch::stable::Tensor const& global_scale);
+                                      torch::stable::Tensor const& global_scale,
+                                      bool is_sf_swizzled_layout);
 
 void fusedQuantizeNvAbsMax_host_sm100(torch::stable::Tensor&       D,
                                       torch::stable::Tensor&       D_sf,
                                       torch::stable::Tensor const& A,
                                       torch::stable::Tensor const& B,
-                                      torch::stable::Tensor const& global_scale);
+                                      torch::stable::Tensor const& global_scale,
+                                      bool is_sf_swizzled_layout);
 
 }  // namespace QUTLASS

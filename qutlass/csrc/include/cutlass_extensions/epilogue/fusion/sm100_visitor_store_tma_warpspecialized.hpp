@@ -234,7 +234,8 @@ template <
   class ElementOutput,
   class ElementCompute,
   class ElementBlockScaleFactor,
-  FloatRoundStyle RoundStyle = FloatRoundStyle::round_to_nearest
+  FloatRoundStyle RoundStyle = FloatRoundStyle::round_to_nearest,
+  bool SfSwizzled = true
 >
 struct Sm100BlockScaleFactorRowStore {
   static_assert(size<1>(EpilogueTile{}) % SFVecSize == 0, "EpilogueTileN should be divisible by SFVecSize");
@@ -436,16 +437,19 @@ struct Sm100BlockScaleFactorRowStore {
         int c_k = K_tile * 4 + c_in_block;
 
         int flat_sf = m_k * sf_cols_per_group + c_k;
-        int logical_sf_cols = groups_per_row * sf_cols_per_group;
-        int data_row = flat_sf / logical_sf_cols;
-        int data_col = flat_sf % logical_sf_cols;
-
-        int data_offset = (data_row / 128) * n_col_blocks * 512
-                        + (data_col / 4) * 512
-                        + (data_row % 32) * 16
-                        + ((data_row % 128) / 32) * 4
-                        + data_col % 4;
-
+        int data_offset;
+        if constexpr (SfSwizzled) {
+          int logical_sf_cols = groups_per_row * sf_cols_per_group;
+          int data_row = flat_sf / logical_sf_cols;
+          int data_col = flat_sf % logical_sf_cols;
+          data_offset = (data_row / 128) * n_col_blocks * 512
+                      + (data_col / 4) * 512
+                      + (data_row % 32) * 16
+                      + ((data_row % 128) / 32) * 4
+                      + data_col % 4;
+        } else {
+          data_offset = flat_sf;
+        }
         if (elem_less(tCcSFD_pred(i * SFVecSize * V), residue_tC_cSFD)) {
           *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = tCrSFD_vec(i);
         }
@@ -523,18 +527,35 @@ struct Sm100BlockScaleFactorRowStore {
       int logical_sf_cols = params_ptr->groups_per_row * sf_cols_per_group;
       int logical_sf_rows = int(M) / params_ptr->groups_per_row;
       uint8_t* sf_ptr = reinterpret_cast<uint8_t*>(ptr_scale_factor);
-      detail::zero_blocked_sf_row_padding(
-          sf_ptr,
-          params_ptr->n_col_blocks,
-          logical_sf_rows,
-          args.thread_idx);
-      if (logical_sf_cols != params_ptr->n_col_blocks * 4) {
-        detail::zero_blocked_sf_column_padding(
+      if constexpr (SfSwizzled) {
+        detail::zero_blocked_sf_row_padding(
             sf_ptr,
             params_ptr->n_col_blocks,
             logical_sf_rows,
-            logical_sf_cols,
             args.thread_idx);
+        if (logical_sf_cols != params_ptr->n_col_blocks * 4) {
+          detail::zero_blocked_sf_column_padding(
+              sf_ptr,
+              params_ptr->n_col_blocks,
+              logical_sf_rows,
+              logical_sf_cols,
+              args.thread_idx);
+        }
+      } else {
+        int padded_sf_cols = params_ptr->n_col_blocks * 4;
+        int row_padding_begin = logical_sf_rows * padded_sf_cols;
+        for (int flat = row_padding_begin + args.thread_idx;
+             flat < params_ptr->padded_sf_elems;
+             flat += 128) {
+          sf_ptr[flat] = 0;
+        }
+        int column_padding = padded_sf_cols - logical_sf_cols;
+        int column_padding_elems = logical_sf_rows * column_padding;
+        for (int flat = args.thread_idx; flat < column_padding_elems; flat += 128) {
+          int row = flat / column_padding;
+          int col = logical_sf_cols + flat % column_padding;
+          sf_ptr[row * padded_sf_cols + col] = 0;
+        }
       }
     }
 
@@ -565,7 +586,8 @@ template <
   class ElementOutput,
   class ElementCompute,
   class ElementBlockScaleFactor,
-  FloatRoundStyle RoundStyle = FloatRoundStyle::round_to_nearest
+  FloatRoundStyle RoundStyle = FloatRoundStyle::round_to_nearest,
+  bool SfSwizzled = true
 >
 struct Sm100BlockScaleFactorRowStoreNv {
   static_assert(size<1>(EpilogueTile{}) % SFVecSize == 0, "EpilogueTileN should be divisible by SFVecSize");
@@ -765,15 +787,19 @@ struct Sm100BlockScaleFactorRowStoreNv {
         int c_k = K_tile * 4 + c_in_block;
 
         int flat_sf = m_k * sf_cols_per_group + c_k;
-        int logical_sf_cols = groups_per_row * sf_cols_per_group;
-        int data_row = flat_sf / logical_sf_cols;
-        int data_col = flat_sf % logical_sf_cols;
-
-        int data_offset = (data_row / 128) * n_col_blocks * 512
-                        + (data_col / 4) * 512
-                        + (data_row % 32) * 16
-                        + ((data_row % 128) / 32) * 4
-                        + data_col % 4;
+        int data_offset;
+        if constexpr (SfSwizzled) {
+          int logical_sf_cols = groups_per_row * sf_cols_per_group;
+          int data_row = flat_sf / logical_sf_cols;
+          int data_col = flat_sf % logical_sf_cols;
+          data_offset = (data_row / 128) * n_col_blocks * 512
+                      + (data_col / 4) * 512
+                      + (data_row % 32) * 16
+                      + ((data_row % 128) / 32) * 4
+                      + data_col % 4;
+        } else {
+          data_offset = flat_sf;
+        }
 
         if (elem_less(tCcSFD_pred(i * SFVecSize * V), residue_tC_cSFD)) {
           *reinterpret_cast<VecType*>(raw_sf_ptr + data_offset) = tCrSFD_vec(i);
@@ -851,18 +877,35 @@ struct Sm100BlockScaleFactorRowStoreNv {
       int logical_sf_cols = params_ptr->groups_per_row * sf_cols_per_group;
       int logical_sf_rows = int(M) / params_ptr->groups_per_row;
       uint8_t* sf_ptr = reinterpret_cast<uint8_t*>(ptr_scale_factor);
-      detail::zero_blocked_sf_row_padding(
-          sf_ptr,
-          params_ptr->n_col_blocks,
-          logical_sf_rows,
-          args.thread_idx);
-      if (logical_sf_cols != params_ptr->n_col_blocks * 4) {
-        detail::zero_blocked_sf_column_padding(
+      if constexpr (SfSwizzled) {
+        detail::zero_blocked_sf_row_padding(
             sf_ptr,
             params_ptr->n_col_blocks,
             logical_sf_rows,
-            logical_sf_cols,
             args.thread_idx);
+        if (logical_sf_cols != params_ptr->n_col_blocks * 4) {
+          detail::zero_blocked_sf_column_padding(
+              sf_ptr,
+              params_ptr->n_col_blocks,
+              logical_sf_rows,
+              logical_sf_cols,
+              args.thread_idx);
+        }
+      } else {
+        int padded_sf_cols = params_ptr->n_col_blocks * 4;
+        int row_padding_begin = logical_sf_rows * padded_sf_cols;
+        for (int flat = row_padding_begin + args.thread_idx;
+             flat < params_ptr->padded_sf_elems;
+             flat += 128) {
+          sf_ptr[flat] = 0;
+        }
+        int column_padding = padded_sf_cols - logical_sf_cols;
+        int column_padding_elems = logical_sf_rows * column_padding;
+        for (int flat = args.thread_idx; flat < column_padding_elems; flat += 128) {
+          int row = flat / column_padding;
+          int col = logical_sf_cols + flat % column_padding;
+          sf_ptr[row * padded_sf_cols + col] = 0;
+        }
       }
     }
 

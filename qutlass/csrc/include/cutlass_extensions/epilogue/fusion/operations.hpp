@@ -117,7 +117,8 @@ template<
   class ElementCompute_,
   class ElementSource_ = ElementOutput_,
   class ElementScalar_ = ElementCompute_,
-  FloatRoundStyle RoundStyle_ = FloatRoundStyle::round_to_nearest
+  FloatRoundStyle RoundStyle_ = FloatRoundStyle::round_to_nearest,
+  bool SfSwizzled_ = true
 >
 struct LinearCombination
     : ScaledAcc<ElementOutput_, ElementCompute_, ElementScalar_, RoundStyle_> {
@@ -133,13 +134,15 @@ template<
   class GmemLayoutTagScalefactor_ = cutlass::layout::RowMajor,
   class ElementSource_ = ElementOutput_,
   class ElementScalar_ = ElementCompute_,
-  FloatRoundStyle RoundStyle_ = FloatRoundStyle::round_to_nearest
+  FloatRoundStyle RoundStyle_ = FloatRoundStyle::round_to_nearest,
+  bool SfSwizzled_ = true
 >
 struct QutlassLinCombBlockScaleFactor
     : LinearCombination<ElementOutput_, ElementCompute_, ElementSource_, ElementScalar_, RoundStyle_> {
   using ElementBlockScaleFactor = ElementBlockScaleFactor_;
   static constexpr int SFVecSize = SFVecSize_;
   static constexpr bool IsBlockScaleSupported = true;
+  static constexpr bool SfSwizzled = SfSwizzled_;
   using GmemLayoutTagScalefactor = GmemLayoutTagScalefactor_;
 };
 
@@ -151,13 +154,15 @@ template<
   class GmemLayoutTagScalefactor_ = cutlass::layout::RowMajor,
   class ElementSource_ = ElementOutput_,
   class ElementScalar_ = ElementCompute_,
-  FloatRoundStyle RoundStyle_ = FloatRoundStyle::round_to_nearest
+  FloatRoundStyle RoundStyle_ = FloatRoundStyle::round_to_nearest,
+  bool SfSwizzled_ = true
 >
 struct QutlassLinCombBlockScaleFactorNv
     : LinearCombination<ElementOutput_, ElementCompute_, ElementSource_, ElementScalar_, RoundStyle_> {
   using ElementBlockScaleFactor = ElementBlockScaleFactor_;
   static constexpr int SFVecSize = SFVecSize_;
   static constexpr bool IsBlockScaleSupported = true;
+  static constexpr bool SfSwizzled = SfSwizzled_;
   using GmemLayoutTagScalefactor = GmemLayoutTagScalefactor_;
 };
 

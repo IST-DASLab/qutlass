@@ -385,12 +385,24 @@ def test_quest_mask_uses_general_blocked_layout():
     assert mismatch <= 1e-4
 
 
+@pytest.mark.parametrize("rot_size", ROT_SIZES)
 @torch.inference_mode()
-def test_row_major_sf_request_is_rejected():
-    h = get_hadamard_matrix(32, DTYPE, DEVICE)
-    a = torch.randn(1, 128, dtype=DTYPE, device=DEVICE)
-    with pytest.raises(ValueError, match="row-major scale-factor"):
-        fusedQuantizeMx(a, h, is_sf_swizzled_layout=False)
+def test_row_major_sf_compatibility(rot_size: int):
+    """The legacy row-major request round-trips to the direct blocked layout."""
+    rows, groups_per_row = 129, 3  # exercise row and SF-column padding
+    h = get_hadamard_matrix(rot_size, DTYPE, DEVICE)
+    a = torch.randn(rows, rot_size * groups_per_row, dtype=DTYPE, device=DEVICE)
+
+    _, sf_row_major = fusedQuantizeMx(
+        a, h, method="abs_max", is_sf_swizzled_layout=False
+    )
+    _, sf_blocked = fusedQuantizeMx(
+        a, h, method="abs_max", is_sf_swizzled_layout=True
+    )
+
+    assert to_blocked(sf_row_major, use_triton_kernel=True).view(torch.uint8).equal(
+        sf_blocked.view(torch.uint8)
+    )
 
 
 @torch.inference_mode()

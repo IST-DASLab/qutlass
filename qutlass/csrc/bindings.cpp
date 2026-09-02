@@ -218,7 +218,8 @@ Tensor matmul_mxf8_bf16_nn(Tensor const& A,
 std::tuple<Tensor, Tensor> fusedQuantizeMxQuest(Tensor const& A,
                                                 Tensor const& B,
                                                 Tensor& OUT,
-                                                Tensor& OUT_sf)
+                                                Tensor& OUT_sf,
+                                                bool is_sf_swizzled_layout)
 {
     check_all_contiguous("fusedQuantizeMxQuest", {{A, "A", 0},
                                                   {B, "B", 1},
@@ -237,11 +238,11 @@ std::tuple<Tensor, Tensor> fusedQuantizeMxQuest(Tensor const& A,
     STD_TORCH_CHECK((A.numel() % HAD_GS) == 0, "A must be divisible by", HAD_GS);
 
     if (HAD_GS == 32) {
-        fusedQuantizeMxQuest_host(OUT, OUT_sf, A, B);
+        fusedQuantizeMxQuest_host(OUT, OUT_sf, A, B, is_sf_swizzled_layout);
     } else if (HAD_GS == 64) {
-        fusedQuantizeMxQuestHad64_host(OUT, OUT_sf, A, B);
+        fusedQuantizeMxQuestHad64_host(OUT, OUT_sf, A, B, is_sf_swizzled_layout);
     } else if (HAD_GS == 128) {
-        fusedQuantizeMxQuestHad128_host(OUT, OUT_sf, A, B);
+        fusedQuantizeMxQuestHad128_host(OUT, OUT_sf, A, B, is_sf_swizzled_layout);
     } else {
         STD_TORCH_CHECK(false,
                         "Unsupported rotation size ", HAD_GS,
@@ -257,7 +258,8 @@ std::tuple<Tensor, Tensor, Tensor> fusedQuantizeMxQuestWithMask(
     Tensor const& B,
     Tensor& OUT,
     Tensor& OUT_sf,
-    Tensor& OUT_mask)
+    Tensor& OUT_mask,
+    bool is_sf_swizzled_layout)
 {
     check_all_contiguous("fusedQuantizeMxQuestWithMask", {{A, "A", 0},
                                                           {B, "B", 1},
@@ -278,7 +280,8 @@ std::tuple<Tensor, Tensor, Tensor> fusedQuantizeMxQuestWithMask(
     STD_TORCH_CHECK((A.numel() % HAD_GS) == 0, "A must be divisible by", HAD_GS);
 
     if (HAD_GS == 32) {
-        fusedQuantizeMxQuestWithMask_host(OUT, OUT_sf, OUT_mask, A, B);
+        fusedQuantizeMxQuestWithMask_host(
+            OUT, OUT_sf, OUT_mask, A, B, is_sf_swizzled_layout);
     } else {
         STD_TORCH_CHECK(false,
                         "Unsupported rotation size ", HAD_GS,
@@ -293,7 +296,8 @@ std::tuple<Tensor, Tensor> fusedQuantizeMxAbsMax(Tensor const& A,
                                                  Tensor const& B,
                                                  Tensor& OUT,
                                                  Tensor& OUT_sf,
-                                                 Tensor const& global_scale)
+                                                 Tensor const& global_scale,
+                                                 bool is_sf_swizzled_layout)
 {
     check_all_contiguous("fusedQuantizeMxAbsMax", {{A, "A", 0},
                                                    {B, "B", 1},
@@ -317,14 +321,18 @@ std::tuple<Tensor, Tensor> fusedQuantizeMxAbsMax(Tensor const& A,
     STD_TORCH_CHECK((A.numel() % HAD_GS) == 0, "A must be divisible by", HAD_GS);
 
     if (HAD_GS == 32) {
-        fusedQuantizeMxAbsMax_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeMxAbsMax_host(
+            OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
     } else if (HAD_GS == 64) {
-        fusedQuantizeMxAbsMaxHad64_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeMxAbsMaxHad64_host(
+            OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
     } else if (HAD_GS == 128) {
 #if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110
-        fusedQuantizeMxAbsMax_host_sm100(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeMxAbsMax_host_sm100(
+            OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
 #elif TARGET_CUDA_ARCH == 120
-        fusedQuantizeMxAbsMaxHad128_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeMxAbsMaxHad128_host(
+            OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
 #endif
     } else {
         STD_TORCH_CHECK(false,
@@ -339,7 +347,8 @@ std::tuple<Tensor, Tensor> fusedQuantizeNvQuest(Tensor const& A,
                                                 Tensor const& B,
                                                 Tensor& OUT,
                                                 Tensor& OUT_sf,
-                                                Tensor const& global_scale)
+                                                Tensor const& global_scale,
+                                                bool is_sf_swizzled_layout)
 {
     check_all_contiguous("fusedQuantizeNvQuest", {{A, "A", 0},
                                                   {B, "B", 1},
@@ -364,13 +373,13 @@ std::tuple<Tensor, Tensor> fusedQuantizeNvQuest(Tensor const& A,
     STD_TORCH_CHECK((A.numel() % HAD_GS) == 0, "A must be divisible by", HAD_GS);
 
     if (HAD_GS == 16) {
-        fusedQuantizeNvQuest_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvQuest_host(OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
     } else if (HAD_GS == 32) {
-        fusedQuantizeNvQuestHad32_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvQuestHad32_host(OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
     } else if (HAD_GS == 64) {
-        fusedQuantizeNvQuestHad64_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvQuestHad64_host(OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
     } else if (HAD_GS == 128) {
-        fusedQuantizeNvQuestHad128_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvQuestHad128_host(OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
     } else {
         STD_TORCH_CHECK(false,
                         "Unsupported rotation size ", HAD_GS,
@@ -384,7 +393,8 @@ std::tuple<Tensor, Tensor> fusedQuantizeNvAbsMax(Tensor const& A,
                                                  Tensor const& B,
                                                  Tensor& OUT,
                                                  Tensor& OUT_sf,
-                                                 Tensor const& global_scale)
+                                                 Tensor const& global_scale,
+                                                 bool is_sf_swizzled_layout)
 {
     check_all_contiguous("fusedQuantizeNvAbsMax", {{A, "A", 0},
                                                    {B, "B", 1},
@@ -408,16 +418,18 @@ std::tuple<Tensor, Tensor> fusedQuantizeNvAbsMax(Tensor const& A,
     STD_TORCH_CHECK((A.numel() % HAD_GS) == 0, "A must be divisible by", HAD_GS);
 
     if (HAD_GS == 16) {
-        fusedQuantizeNvAbsMax_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvAbsMax_host(OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
     } else if (HAD_GS == 32) {
-        fusedQuantizeNvAbsMaxHad32_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvAbsMaxHad32_host(OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
     } else if (HAD_GS == 64) {
-        fusedQuantizeNvAbsMaxHad64_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvAbsMaxHad64_host(OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
     } else if(HAD_GS==128){
 #if TARGET_CUDA_ARCH == 100 || TARGET_CUDA_ARCH == 101 || TARGET_CUDA_ARCH == 103 || TARGET_CUDA_ARCH == 110
-        fusedQuantizeNvAbsMax_host_sm100(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvAbsMax_host_sm100(
+            OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
 #elif TARGET_CUDA_ARCH == 120
-        fusedQuantizeNvAbsMaxHad128_host(OUT, OUT_sf, A, B, global_scale);
+        fusedQuantizeNvAbsMaxHad128_host(
+            OUT, OUT_sf, A, B, global_scale, is_sf_swizzled_layout);
 #endif
     } else {
         STD_TORCH_CHECK(false,
@@ -504,12 +516,12 @@ STABLE_TORCH_LIBRARY_FRAGMENT(_qutlass_C, ops) {
   ops.def("matmul_ada_mxf4_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
   ops.def("matmul_mxf8_bf16_tn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
   ops.def("matmul_mxf8_bf16_nn(Tensor A, Tensor B, Tensor A_sf, Tensor B_sf, Tensor alpha) -> Tensor");
-  ops.def("fusedQuantizeMxQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf) -> (Tensor, Tensor)");
-  ops.def("fusedQuantizeMxAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
-  ops.def("fusedQuantizeNvQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
-  ops.def("fusedQuantizeNvAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale) -> (Tensor, Tensor)");
+  ops.def("fusedQuantizeMxQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, bool is_sf_swizzled_layout) -> (Tensor, Tensor)");
+  ops.def("fusedQuantizeMxAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale, bool is_sf_swizzled_layout) -> (Tensor, Tensor)");
+  ops.def("fusedQuantizeNvQuest(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale, bool is_sf_swizzled_layout) -> (Tensor, Tensor)");
+  ops.def("fusedQuantizeNvAbsMax(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor global_scale, bool is_sf_swizzled_layout) -> (Tensor, Tensor)");
 #ifndef QUTLASS_MINIMAL_BUILD
-  ops.def("fusedQuantizeMxQuestWithMask(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor OUT_mask) -> (Tensor, Tensor, Tensor)");
+  ops.def("fusedQuantizeMxQuestWithMask(Tensor A, Tensor R, Tensor OUT, Tensor OUT_sf, Tensor OUT_mask, bool is_sf_swizzled_layout) -> (Tensor, Tensor, Tensor)");
   ops.def("backward_t_bf16(Tensor x, Tensor h, Tensor xh_e2m1, Tensor xh_e8m0) -> ()");
   ops.def("backward_qt_bf16(Tensor x_e2m1, Tensor x_e8m0, Tensor h, Tensor alpha, Tensor xh_e2m1, Tensor xh_e8m0) -> ()");
   ops.def("backward_bf16_square_double_mxfp8(Tensor x_bf16, Tensor x_fp8, Tensor row_scales, Tensor column_scales) -> ()");

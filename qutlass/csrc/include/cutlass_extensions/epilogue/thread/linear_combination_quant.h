@@ -65,7 +65,8 @@ template <typename ElementOutput_,
           typename ElementCompute_ = cutlass::bfloat16_t, //TODO: float
           MyScaleType::Kind Scale = MyScaleType::Quantize,
           FloatRoundStyle Round = FloatRoundStyle::round_to_nearest,
-          typename ElementSource_ = cutlass::bfloat16_t> //TODO: float
+          typename ElementSource_ = cutlass::bfloat16_t, //TODO: float
+          bool SfSwizzled = true>
 class LinearCombinationQuantMx {
  public:
   using ElementOutput = ElementOutput_;
@@ -75,6 +76,7 @@ class LinearCombinationQuantMx {
 
   static int const kCount = Count;
   static const MyScaleType::Kind kScale = MyScaleType::Quantize;
+  static constexpr bool kSfSwizzled = SfSwizzled;
 
   using FragmentOutput = Array<ElementOutput, kCount>;
   using FragmentSource = Array<ElementSource, kCount>;
@@ -140,7 +142,8 @@ template <typename ElementOutput_,
           typename ElementCompute_ = cutlass::bfloat16_t, //FIXME: float
           MyScaleType::Kind Scale = MyScaleType::Quantize,
           FloatRoundStyle Round = FloatRoundStyle::round_to_nearest, //TODO: change?
-          typename ElementSource_ = cutlass::bfloat16_t> //FIXME: float
+          typename ElementSource_ = cutlass::bfloat16_t, //FIXME: float
+          bool SfSwizzled = true>
 class LinearCombinationQuantMxMask {
  public:
   using ElementOutput = ElementOutput_;
@@ -150,6 +153,7 @@ class LinearCombinationQuantMxMask {
 
   static int const kCount = Count;
   static const MyScaleType::Kind kScale = MyScaleType::Quantize;
+  static constexpr bool kSfSwizzled = SfSwizzled;
 
   using FragmentOutput = Array<ElementOutput, kCount>;
   using FragmentSource = Array<ElementSource, kCount>;
@@ -215,7 +219,8 @@ template <typename ElementOutput_,
           typename ElementCompute_ = cutlass::bfloat16_t, //TODO: float
           MyScaleType::Kind Scale = MyScaleType::Quantize,
           FloatRoundStyle Round = FloatRoundStyle::round_to_nearest,
-          typename ElementSource_ = cutlass::bfloat16_t> //TODO: float
+          typename ElementSource_ = cutlass::bfloat16_t,
+          bool SfSwizzled = true> //TODO: float
 class LinearCombinationQuantNv {
  public:
   using ElementOutput = ElementOutput_;
@@ -225,6 +230,7 @@ class LinearCombinationQuantNv {
 
   static int const kCount = Count;
   static const MyScaleType::Kind kScale = MyScaleType::Quantize;
+  static constexpr bool kSfSwizzled = SfSwizzled;
 
   using FragmentOutput = Array<ElementOutput, kCount>;
   using FragmentSource = Array<ElementSource, kCount>;

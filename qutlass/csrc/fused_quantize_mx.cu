@@ -44,7 +44,20 @@ using LayoutInputA = cutlass::layout::RowMajor;
 using LayoutInputB = cutlass::layout::RowMajor;
 using LayoutOutput = cutlass::layout::RowMajor;
 
-template <typename ShapeMMAThreadBlock, typename ShapeMMAWarp, typename InstructionShape, bool Quest=true, int RotationSize=32>
+template <bool SfSwizzled>
+using EpilogueOutputOp = cutlass::epilogue::thread::LinearCombinationQuantMx<
+    ElementOutput,
+    128 / cutlass::sizeof_bits<ElementGemmOutput>::value,
+    ElementAccumulator,
+    ElementGemmOutput,
+    cutlass::epilogue::thread::MyScaleType::Quantize,
+    cutlass::FloatRoundStyle::round_to_nearest,
+    ElementGemmOutput,
+    SfSwizzled>;
+
+template <typename ShapeMMAThreadBlock, typename ShapeMMAWarp,
+          typename InstructionShape, bool Quest = true, int RotationSize = 32,
+          bool SfSwizzled = true>
 using Gemm_ =
     cutlass::gemm::device::GemmQuantMx<
         ElementInputA, LayoutInputA,
@@ -58,7 +71,8 @@ using Gemm_ =
         ShapeMMAWarp,
         InstructionShape,
         Quest,
-        RotationSize
+        RotationSize,
+        EpilogueOutputOp<SfSwizzled>
     >;
 
 template <typename Gemm>
@@ -111,11 +125,44 @@ struct GemmRunner {
 
 };
 
+template <bool SfSwizzled, typename TileShape, typename WarpShape,
+          typename MmaShape, bool Quest, int RotationSize>
+void run_quantize_mx(torch::stable::Tensor& D,
+                     torch::stable::Tensor& D_sf,
+                     torch::stable::Tensor const& A,
+                     torch::stable::Tensor const& B,
+                     int32_t M, int32_t N, int32_t K,
+                     float* global_scale) {
+  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, Quest, RotationSize,
+                   SfSwizzled>> runner;
+  runner.run(D, D_sf, A, B, M, N, K, A.device(), global_scale,
+             D_sf.size(1) / 4, A.size(-1) / 32);
+}
+
+template <typename TileShape, typename WarpShape, typename MmaShape,
+          bool Quest, int RotationSize>
+void dispatch_quantize_mx(torch::stable::Tensor& D,
+                          torch::stable::Tensor& D_sf,
+                          torch::stable::Tensor const& A,
+                          torch::stable::Tensor const& B,
+                          int32_t M, int32_t N, int32_t K,
+                          float* global_scale,
+                          bool is_sf_swizzled_layout) {
+  if (is_sf_swizzled_layout) {
+    run_quantize_mx<true, TileShape, WarpShape, MmaShape, Quest, RotationSize>(
+        D, D_sf, A, B, M, N, K, global_scale);
+  } else {
+    run_quantize_mx<false, TileShape, WarpShape, MmaShape, Quest, RotationSize>(
+        D, D_sf, A, B, M, N, K, global_scale);
+  }
+}
+
 
 void fusedQuantizeMxQuest_host(torch::stable::Tensor& D,
                                torch::stable::Tensor& D_sf,
                                torch::stable::Tensor const& A,
-                               torch::stable::Tensor const& B)
+                               torch::stable::Tensor const& B,
+                               bool is_sf_swizzled_layout)
 {
   int32_t M = A.numel() / 32;
   int32_t N = B.size(1);
@@ -125,16 +172,16 @@ void fusedQuantizeMxQuest_host(torch::stable::Tensor& D,
   using WarpShape = typename cutlass::gemm::GemmShape<32, 32, 32>;
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
-  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 32>> runGemm;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
-                            nullptr, D_sf.size(1) / 4, A.size(-1) / 32);
+  dispatch_quantize_mx<TileShape, WarpShape, MmaShape, true, 32>(
+      D, D_sf, A, B, M, N, K, nullptr, is_sf_swizzled_layout);
 }
 
 void fusedQuantizeMxAbsMax_host(torch::stable::Tensor& D,
                                 torch::stable::Tensor& D_sf,
                                 torch::stable::Tensor const& A,
                                 torch::stable::Tensor const& B,
-                                torch::stable::Tensor const& global_scale)
+                                torch::stable::Tensor const& global_scale,
+                                bool is_sf_swizzled_layout)
 {
   int32_t M = A.numel() / 32;
   int32_t N = B.size(1);
@@ -144,17 +191,17 @@ void fusedQuantizeMxAbsMax_host(torch::stable::Tensor& D,
   using WarpShape = typename cutlass::gemm::GemmShape<32, 32, 32>;
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
-  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 32>> runGemm;
-  int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
-                            static_cast<float*>(const_cast<void*>(global_scale.const_data_ptr())),
-                            n_col_blocks, A.size(-1) / 32);
+  dispatch_quantize_mx<TileShape, WarpShape, MmaShape, false, 32>(
+      D, D_sf, A, B, M, N, K,
+      static_cast<float*>(const_cast<void*>(global_scale.const_data_ptr())),
+      is_sf_swizzled_layout);
 }
 
 void fusedQuantizeMxQuestHad64_host(torch::stable::Tensor& D,
                                torch::stable::Tensor& D_sf,
                                torch::stable::Tensor const& A,
-                               torch::stable::Tensor const& B)
+                               torch::stable::Tensor const& B,
+                               bool is_sf_swizzled_layout)
 {
   int32_t M = A.numel() / 64;
   int32_t N = B.size(1);
@@ -164,16 +211,16 @@ void fusedQuantizeMxQuestHad64_host(torch::stable::Tensor& D,
   using WarpShape = typename cutlass::gemm::GemmShape<32, 64, 32>;
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
-  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 64>> runGemm;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
-                            nullptr, D_sf.size(1) / 4, A.size(-1) / 32);
+  dispatch_quantize_mx<TileShape, WarpShape, MmaShape, true, 64>(
+      D, D_sf, A, B, M, N, K, nullptr, is_sf_swizzled_layout);
 }
 
 void fusedQuantizeMxAbsMaxHad64_host(torch::stable::Tensor& D,
                                 torch::stable::Tensor& D_sf,
                                 torch::stable::Tensor const& A,
                                 torch::stable::Tensor const& B,
-                                torch::stable::Tensor const& global_scale)
+                                     torch::stable::Tensor const& global_scale,
+                                     bool is_sf_swizzled_layout)
 {
   int32_t M = A.numel() / 64;
   int32_t N = B.size(1);
@@ -183,17 +230,17 @@ void fusedQuantizeMxAbsMaxHad64_host(torch::stable::Tensor& D,
   using WarpShape = typename cutlass::gemm::GemmShape<32, 64, 32>;
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
-  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 64>> runGemm;
-  int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
-                            static_cast<float*>(const_cast<void*>(global_scale.const_data_ptr())),
-                            n_col_blocks, A.size(-1) / 32);
+  dispatch_quantize_mx<TileShape, WarpShape, MmaShape, false, 64>(
+      D, D_sf, A, B, M, N, K,
+      static_cast<float*>(const_cast<void*>(global_scale.const_data_ptr())),
+      is_sf_swizzled_layout);
 }
 
 void fusedQuantizeMxQuestHad128_host(torch::stable::Tensor& D,
                                torch::stable::Tensor& D_sf,
                                torch::stable::Tensor const& A,
-                               torch::stable::Tensor const& B)
+                                     torch::stable::Tensor const& B,
+                                     bool is_sf_swizzled_layout)
 {
   int32_t M = A.numel() / 128;
   int32_t N = B.size(1);
@@ -203,16 +250,16 @@ void fusedQuantizeMxQuestHad128_host(torch::stable::Tensor& D,
   using WarpShape = typename cutlass::gemm::GemmShape<32, 128, 32>;
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
-  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, true, 128>> runGemm;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
-                            nullptr, D_sf.size(1) / 4, A.size(-1) / 32);
+  dispatch_quantize_mx<TileShape, WarpShape, MmaShape, true, 128>(
+      D, D_sf, A, B, M, N, K, nullptr, is_sf_swizzled_layout);
 }
 
 void fusedQuantizeMxAbsMaxHad128_host(torch::stable::Tensor& D,
                                 torch::stable::Tensor& D_sf,
                                 torch::stable::Tensor const& A,
                                 torch::stable::Tensor const& B,
-                                torch::stable::Tensor const& global_scale)
+                                      torch::stable::Tensor const& global_scale,
+                                      bool is_sf_swizzled_layout)
 {
   int32_t M = A.numel() / 128;
   int32_t N = B.size(1);
@@ -222,11 +269,10 @@ void fusedQuantizeMxAbsMaxHad128_host(torch::stable::Tensor& D,
   using WarpShape = typename cutlass::gemm::GemmShape<32, 128, 32>;
   using MmaShape  = typename cutlass::gemm::GemmShape<16, 8, 16>;
 
-  GemmRunner<Gemm_<TileShape, WarpShape, MmaShape, false, 128>> runGemm;
-  int n_col_blocks = D_sf.size(1) / 4;
-  runGemm.run(D, D_sf, A, B, M, N, K, A.device(),
-                            static_cast<float*>(const_cast<void*>(global_scale.const_data_ptr())),
-                            n_col_blocks, A.size(-1) / 32);
+  dispatch_quantize_mx<TileShape, WarpShape, MmaShape, false, 128>(
+      D, D_sf, A, B, M, N, K,
+      static_cast<float*>(const_cast<void*>(global_scale.const_data_ptr())),
+      is_sf_swizzled_layout);
 }
 
 } // namespace QUTLASS

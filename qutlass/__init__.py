@@ -16,7 +16,7 @@
 
 import torch
 import qutlass._CUDA  # noqa: F401 - registers torch.ops._qutlass_C
-from qutlass.utils import get_padded_shape_mx, get_padded_shape_nv, pad_to_block
+from qutlass.utils import get_padded_shape_mx, get_padded_shape_nv, pad_to_block, pad_scales
 from typing import Literal
 
 import warnings
@@ -155,11 +155,17 @@ def fusedQuantizeMx(
     return_mask: bool = False,
 ):
     padded_rows, padded_cols = get_padded_shape_mx(a)
+    rows, cols = a.numel() // a.size(-1), a.size(-1) // 32
     xh_e2m1 = torch.empty(
         *a.shape[:-1], a.size(-1) // 2, dtype=torch.uint8, device=a.device
     )
+    # The kernels write the scales as a dense [rows, cols] matrix, so they can
+    # only write into the padded tensor directly when no column padding is needed.
     xh_e8m0 = torch.empty(
-        padded_rows, padded_cols, dtype=torch.float8_e8m0fnu, device=a.device
+        padded_rows if cols == padded_cols else rows,
+        cols,
+        dtype=torch.float8_e8m0fnu,
+        device=a.device,
     )
 
     if method == "quest":
@@ -167,17 +173,21 @@ def fusedQuantizeMx(
             clip_mask = torch.empty(
                 *a.shape[:-1], a.size(-1) // 8, dtype=torch.uint8, device=a.device
             )
-            return qutlass_CUDA.fusedQuantizeMxQuestWithMask(
+            out = qutlass_CUDA.fusedQuantizeMxQuestWithMask(
                 a, b, xh_e2m1, xh_e8m0, clip_mask
             )
         else:
-            return qutlass_CUDA.fusedQuantizeMxQuest(a, b, xh_e2m1, xh_e8m0)
+            out = qutlass_CUDA.fusedQuantizeMxQuest(a, b, xh_e2m1, xh_e8m0)
     elif method == "abs_max":
         if return_mask:
             raise ValueError("return_mask is only supported for method 'quest'")
-        return qutlass_CUDA.fusedQuantizeMxAbsMax(a, b, xh_e2m1, xh_e8m0)
+        out = qutlass_CUDA.fusedQuantizeMxAbsMax(a, b, xh_e2m1, xh_e8m0)
     else:
         raise ValueError(f"invalid method {method!r}, must be 'quest' or 'abs_max'")
+
+    if cols != padded_cols:
+        out = (out[0], pad_scales(out[1], padded_rows, padded_cols), *out[2:])
+    return out
 
 
 def fusedQuantizeNv(
@@ -188,19 +198,29 @@ def fusedQuantizeNv(
     method: Literal["quest", "abs_max"] = "abs_max",
 ) -> tuple[torch.Tensor, torch.Tensor]:
     padded_rows, padded_cols = get_padded_shape_nv(a)
+    rows, cols = a.numel() // a.size(-1), a.size(-1) // 16
     xh_e2m1 = torch.empty(
         *a.shape[:-1], a.size(-1) // 2, dtype=torch.uint8, device=a.device
     )
+    # The kernels write the scales as a dense [rows, cols] matrix, so they can
+    # only write into the padded tensor directly when no column padding is needed.
     xh_e4m3 = torch.empty(
-        padded_rows, padded_cols, dtype=torch.float8_e4m3fn, device=a.device
+        padded_rows if cols == padded_cols else rows,
+        cols,
+        dtype=torch.float8_e4m3fn,
+        device=a.device,
     )
 
     if method == "quest":
-        return qutlass_CUDA.fusedQuantizeNvQuest(a, b, xh_e2m1, xh_e4m3, global_scale)
+        out = qutlass_CUDA.fusedQuantizeNvQuest(a, b, xh_e2m1, xh_e4m3, global_scale)
     elif method == "abs_max":
-        return qutlass_CUDA.fusedQuantizeNvAbsMax(a, b, xh_e2m1, xh_e4m3, global_scale)
+        out = qutlass_CUDA.fusedQuantizeNvAbsMax(a, b, xh_e2m1, xh_e4m3, global_scale)
     else:
         raise ValueError(f"invalid method {method!r}, must be 'quest' or 'abs_max'")
+
+    if cols != padded_cols:
+        out = (out[0], pad_scales(out[1], padded_rows, padded_cols))
+    return out
 
 
 def backward_t_bf16(

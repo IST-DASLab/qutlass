@@ -20,7 +20,7 @@ import torch
 from scipy.linalg import hadamard
 
 from qutlass import matmul_nvf4_bf16_tn, fusedQuantizeNv
-from qutlass.utils import to_blocked
+from qutlass.utils import get_padded_shape_nv, to_blocked
 
 try:
     from flashinfer import autotune
@@ -221,6 +221,39 @@ def test_fused_quantization(rot_size: int, global_scale_value: float):
     out = matmul_nvf4_bf16_tn(
         a_e2m1, b_e2m1, a_scale_block, b_scale_block, alpha
     )
+    assert out.equal(out_ref.to(dtype=out.dtype))
+
+
+@pytest.mark.parametrize("rot_size", [16, 32])
+@pytest.mark.parametrize("k", [96, 4128])
+@torch.inference_mode()
+def test_fused_quantization_k_not_multiple_of_64(rot_size: int, k: int):
+    # k // 16 is not a multiple of 4, so the scale tensor has padding columns.
+    dtype, device = DTYPE, DEVICE
+    h = get_hadamard_matrix(rot_size, dtype, device)
+    m, n = 200, 256
+    a = torch.randn(m, k, dtype=dtype, device=device) * 25.0
+    b = torch.randn(n, k, dtype=dtype, device=device) * 25.0
+    global_scale = torch.tensor([6.0], device=device)
+
+    a_dq_ref, _, _ = _forward_quantize_ref(a, h, rot_size)
+    a_e2m1, a_e4m3 = fusedQuantizeNv(a, h, global_scale)
+    assert a_e4m3.shape == get_padded_shape_nv(a)
+    a_dq, *_ = _dq_fp4(a_e2m1, a_e4m3[:m, : k // 16], alpha=6.0)
+
+    torch.testing.assert_close(a_dq, a_dq_ref, rtol=0.34, atol=100)
+    assert (a_dq != a_dq_ref).float().mean() <= 1e-1
+
+    b_e2m1, b_e4m3 = fusedQuantizeNv(b, h, global_scale)
+    b_dq, *_ = _dq_fp4(b_e2m1, b_e4m3[:n, : k // 16], alpha=1.0)
+    a_dq, *_ = _dq_fp4(a_e2m1, a_e4m3[:m, : k // 16], alpha=1.0)
+    out_ref = a_dq @ b_dq.transpose(-2, -1)
+
+    # k // 16 is not a multiple of 4, so the blocked scales cannot be viewed as [-1, k // 16].
+    a_scale_block = to_blocked(a_e4m3, use_triton_kernel=True)
+    b_scale_block = to_blocked(b_e4m3, use_triton_kernel=True)
+    alpha = torch.tensor([1.0], device=device)
+    out = matmul_nvf4_bf16_tn(a_e2m1, b_e2m1, a_scale_block, b_scale_block, alpha)
     assert out.equal(out_ref.to(dtype=out.dtype))
 
 

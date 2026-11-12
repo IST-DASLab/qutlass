@@ -21,7 +21,7 @@ from scipy.linalg import hadamard
 
 import qutlass
 from qutlass import matmul_mxf4_bf16_tn, fusedQuantizeMx
-from qutlass.utils import to_blocked
+from qutlass.utils import get_padded_shape_mx, to_blocked
 
 try:
     from flashinfer import autotune
@@ -267,6 +267,25 @@ def test_fused_quantization_quest(rot_size: int):
     alpha = torch.tensor([1.0], device=device)
     out = matmul_mxf4_bf16_tn(a_e2m1, b_e2m1, a_scale_block, b_scale_block, alpha)
     assert out.equal(out_ref.to(dtype=out.dtype))
+
+
+@pytest.mark.parametrize("rot_size,k", [(32, 4128), (32, 4160), (64, 4160)])
+@pytest.mark.parametrize("quest", [True, False])
+@torch.inference_mode()
+def test_fused_quantization_k_not_multiple_of_128(rot_size: int, k: int, quest: bool):
+    # k // 32 is not a multiple of 4, so the scale tensor has padding columns.
+    dtype, device = DTYPE, DEVICE
+    h = get_hadamard_matrix(rot_size, dtype, device)
+    m = 200
+    x = torch.randn(m, k, dtype=dtype, device=device) * 25.0
+
+    xh_dq_ref, _, _ = _forward_quantize_ref(x, h, rot_size, quest=quest)
+    xh_e2m1, xh_e8m0 = fusedQuantizeMx(x, h, method="quest" if quest else "abs_max")
+    assert xh_e8m0.shape == get_padded_shape_mx(x)
+    xh_dq, *_ = _dq_fp4(xh_e2m1, xh_e8m0[:m, : k // 32], alpha=1.0 if quest else 3.0)
+
+    torch.testing.assert_close(xh_dq, xh_dq_ref, rtol=0.34, atol=100)
+    assert (xh_dq != xh_dq_ref).float().mean() <= 1e-4
 
 
 @pytest.mark.parametrize("model", list(LLAMA_MODELS.keys()))

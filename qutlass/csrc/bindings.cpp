@@ -322,6 +322,8 @@ std::tuple<Tensor, Tensor> fusedQuantizeMxAbsMax(Tensor const& A,
         fusedQuantizeMxAbsMax_host_sm100(OUT, OUT_sf, A, B, global_scale);
 #elif TARGET_CUDA_ARCH == 120
         fusedQuantizeMxAbsMaxHad128_host(OUT, OUT_sf, A, B);
+#else
+        STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
     } else {
         STD_TORCH_CHECK(false,
@@ -415,6 +417,8 @@ std::tuple<Tensor, Tensor> fusedQuantizeNvAbsMax(Tensor const& A,
         fusedQuantizeNvAbsMax_host_sm100(OUT, OUT_sf, A, B, global_scale);
 #elif TARGET_CUDA_ARCH == 120
         fusedQuantizeNvAbsMaxHad128_host(OUT, OUT_sf, A, B, global_scale);
+#else
+        STD_TORCH_CHECK(false, "Unsupported CUDA arch");
 #endif
     } else {
         STD_TORCH_CHECK(false,

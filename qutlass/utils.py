@@ -157,6 +157,17 @@ def get_padded_shape_nv(a: torch.Tensor):
     return padded_rows, padded_cols
 
 
+def pad_scales(scales: torch.Tensor, padded_rows: int, padded_cols: int) -> torch.Tensor:
+    """
+    Copy a dense [rows, cols] scale matrix into a zero-filled
+    [padded_rows, padded_cols] tensor, as expected by to_blocked().
+    """
+    rows, cols = scales.shape
+    out = torch.zeros(padded_rows, padded_cols, dtype=torch.uint8, device=scales.device)
+    out[:rows, :cols] = scales.view(torch.uint8)
+    return out.view(scales.dtype)
+
+
 def to_blocked(input_matrix, use_triton_kernel: bool = False) -> torch.Tensor:
     """
     Rearrange a large matrix by breaking it into blocks and applying the rearrangement pattern.

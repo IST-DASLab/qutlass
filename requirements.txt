@@ -1,4 +1,4 @@
-torch>=2.8
+torch>=2.11
 scipy
 triton
 matplotlib

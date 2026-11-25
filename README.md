@@ -3,7 +3,7 @@
 [![Python 3.12](https://img.shields.io/badge/python-3.12-blue.svg)](https://www.python.org/downloads/)
 [![CUDA 12.8](https://img.shields.io/badge/CUDA-12.8-green.svg)](https://developer.nvidia.com/cuda-toolkit)
 [![Static Badge](https://img.shields.io/badge/CUTLASS-4.2.1-purple)](https://github.com/NVIDIA/cutlass)
-[![Static Badge](https://img.shields.io/badge/PyTorch-2.8-red)](https://download.pytorch.org/whl/nightly/cu128)
+[![Static Badge](https://img.shields.io/badge/PyTorch-2.11%2B-red)](https://pytorch.org/get-started/previous-versions/)
 
 **CUTLASS-powered quantized BLAS library for low-bit deep learning on NVIDIA Blackwell GPUs.**
 
@@ -90,19 +90,25 @@ $$
 
 ### Installation:
 
-1. Install requirements:
+Run these commands from the root of this repository.
+
+1. Install a CUDA-enabled build of [PyTorch 2.11 or newer](https://pytorch.org/get-started/previous-versions/) that matches your CUDA toolkit. This command installs PyTorch 2.11 for CUDA 12.8.
+
+```bash
+pip install torch==2.11.0 --index-url https://download.pytorch.org/whl/cu128
+```
+
+2. Install the remaining requirements.
 
 ```bash
 pip install -r requirements.txt
 ```
 
-2. Install QuTLASS (in editable mode):
+3. Install QuTLASS in editable mode.
 
 ```bash
 pip install --no-build-isolation -e .
 ```
-
-in the root folder of this repository.
 
 > **Note:** To generate accurate quantized models using MXFP4 or NVFP4 formats, refer to the [FP-Quant repository](https://github.com/IST-DASLab/FP-Quant).
 
